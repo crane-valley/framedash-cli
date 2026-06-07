@@ -2,9 +2,11 @@ name: Release
 
 # Publishes this package to npm via Trusted Publishing (OIDC) -- no long-lived
 # NPM_TOKEN. This mirror repo is PUBLIC, so a provenance attestation is generated
-# and published. Trusted publishing enables provenance by default; we still pass
-# --provenance explicitly so the intent is unambiguous and the dry run validates
-# the provenance prerequisites (repository.url match, OIDC context).
+# and published. Trusted publishing enables provenance by default; --provenance is
+# still passed explicitly on the real publish so the intent is unambiguous.
+# dry_run only builds and packs (npm pack --dry-run) -- it validates the build and
+# tarball contents locally; OIDC auth and provenance are exercised only by the
+# real (dry_run=false) publish.
 #
 # This file is generated into the mirror by scripts/snapshot-sdk.ps1 in the
 # private monorepo (crane-valley/framedash); edit it there, not here.
@@ -23,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (build + npm publish --dry-run, no registry write)"
+        description: "Dry run (build + npm pack, no registry write)"
         type: boolean
         default: true
 
@@ -60,16 +62,23 @@ jobs:
       # mcp-server this resolves @framedash/api-client from the registry (the
       # mirror manifest pins it to an exact version, not the workspace: protocol).
       - run: npm install
+      # Build BEFORE npm publish. npm normalizes package.json (validating that
+      # each bin's target file exists) before any publish lifecycle script runs;
+      # if dist is absent at that point it silently strips the package bin. So the
+      # mirror has no prepack and builds here instead -- dist exists when npm
+      # normalizes, and the bin survives.
+      - run: npm run build
       - name: Publish via OIDC with provenance
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          # prepack (clean + tsc build) runs during npm publish; for cli /
-          # mcp-server it resolves api-client's types from node_modules.
           if [ "$DRY_RUN" = "true" ]; then
-            echo "DRY RUN: no registry write"
-            npm publish --dry-run --provenance --access public
+            # npm pack (not npm publish --dry-run): validates build + tarball
+            # contents without the registry round-trip, so it does not fail on an
+            # already-published version. Provenance only applies on a real publish.
+            echo "DRY RUN: build + pack only, no registry write"
+            npm pack --dry-run
           else
             npm publish --provenance --access public
           fi

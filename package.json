@@ -1,6 +1,6 @@
 {
 	"name": "@framedash/cli",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"license": "MIT",
 	"type": "module",
 	"files": [
@@ -25,14 +25,13 @@
 		"type-check": "tsc --noEmit",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
-		"clean": "rm -rf dist",
-		"prepack": "npm run clean && npm run build"
+		"clean": "rm -rf dist"
 	},
 	"engines": {
 		"node": ">=18.0.0"
 	},
 	"dependencies": {
-		"@framedash/api-client": "0.1.0",
+		"@framedash/api-client": "0.1.1",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
