@@ -1,8 +1,10 @@
 name: Release
 
 # Publishes this package to npm via Trusted Publishing (OIDC) -- no long-lived
-# NPM_TOKEN. This mirror repo is PUBLIC, so npm also generates and publishes a
-# provenance attestation automatically (no --provenance flag needed).
+# NPM_TOKEN. This mirror repo is PUBLIC, so a provenance attestation is generated
+# and published. Trusted publishing enables provenance by default; we still pass
+# --provenance explicitly so the intent is unambiguous and the dry run validates
+# the provenance prerequisites (repository.url match, OIDC context).
 #
 # This file is generated into the mirror by scripts/snapshot-sdk.ps1 in the
 # private monorepo (crane-valley/framedash); edit it there, not here.
@@ -58,7 +60,7 @@ jobs:
       # mcp-server this resolves @framedash/api-client from the registry (the
       # mirror manifest pins it to an exact version, not the workspace: protocol).
       - run: npm install
-      - name: Publish via OIDC (provenance auto-generated for this public repo)
+      - name: Publish via OIDC with provenance
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
@@ -67,7 +69,7 @@ jobs:
           # mcp-server it resolves api-client's types from node_modules.
           if [ "$DRY_RUN" = "true" ]; then
             echo "DRY RUN: no registry write"
-            npm publish --dry-run --access public
+            npm publish --dry-run --provenance --access public
           else
-            npm publish --access public
+            npm publish --provenance --access public
           fi
