@@ -1,0 +1,44 @@
+{
+	"name": "@framedash/cli",
+	"version": "0.1.0",
+	"license": "MIT",
+	"type": "module",
+	"files": [
+		"dist"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"bin": {
+		"framedash": "./dist/index.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"clean": "rm -rf dist",
+		"prepack": "pnpm run clean && pnpm run build"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"dependencies": {
+		"@framedash/api-client": "workspace:*",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.0",
+		"@vitest/coverage-v8": "^3.2.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.2.0"
+	}
+}

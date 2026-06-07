@@ -1,0 +1,12 @@
+# Changelog
+
+All notable changes to `@framedash/cli` are documented here. This project follows
+[Keep a Changelog](https://keepachangelog.com/) and
+[Semantic Versioning](https://semver.org/).
+
+## [0.1.0] - 2026-06-06
+
+Initial public pre-release (beta).
+
+- `framedash` CLI for analytics queries, alerts, maps, and content management.
+- Designed for CI/CD pipelines and coding-agent workflows.
