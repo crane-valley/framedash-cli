@@ -1,0 +1,73 @@
+name: Release
+
+# Publishes this package to npm via Trusted Publishing (OIDC) -- no long-lived
+# NPM_TOKEN. This mirror repo is PUBLIC, so npm also generates and publishes a
+# provenance attestation automatically (no --provenance flag needed).
+#
+# This file is generated into the mirror by scripts/snapshot-sdk.ps1 in the
+# private monorepo (crane-valley/framedash); edit it there, not here.
+#
+# ONE-TIME OWNER SETUP (required before the first dry_run=false run):
+#   On npmjs.com, for THIS package -> Settings -> Trusted Publisher -> add a
+#   GitHub Actions publisher:
+#     Organization or user : crane-valley
+#     Repository           : <this mirror repo, e.g. framedash-cli>
+#     Workflow filename    : release.yml
+#     Allowed actions      : npm publish
+#   (A trusted publisher can only be added to a package that already exists, so
+#   the initial 0.1.0 publish was token-based; 0.1.1+ uses OIDC here.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build + npm publish --dry-run, no registry write)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # required for npm Trusted Publishing via OIDC
+
+jobs:
+  publish:
+    name: Publish to npm (OIDC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Refuse to publish from a non-default ref
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Release must run on main, not $REF"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # OIDC trusted publishing requires Node >= 22.14 and npm >= 11.5.1.
+          node-version: "22.14.0"
+      - name: Use npm with OIDC support (11.x line, >= 11.5.1)
+        run: npm install -g npm@11
+      # npm install (not ci): the mirror ships no package-lock.json. For cli /
+      # mcp-server this resolves @framedash/api-client from the registry (the
+      # mirror manifest pins it to an exact version, not the workspace: protocol).
+      - run: npm install
+      - name: Publish via OIDC (provenance auto-generated for this public repo)
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # prepack (clean + tsc build) runs during npm publish; for cli /
+          # mcp-server it resolves api-client's types from node_modules.
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN: no registry write"
+            npm publish --dry-run --access public
+          else
+            npm publish --access public
+          fi
