@@ -1,3 +1,4 @@
+import { buildFunnelPath } from "@framedash/api-client";
 import { formatOutput } from "../lib/formatters.js";
 import { error, log } from "../lib/logger.js";
 import { runCommand } from "../lib/run-command.js";
@@ -19,12 +20,15 @@ export async function funnel(args: string[]): Promise<void> {
 				process.exit(1);
 			}
 
-			const params = new URLSearchParams();
-			params.set("steps", values.steps as string);
-			if (values.days) params.set("days", values.days as string);
-			if (values.window) params.set("window", values.window as string);
-
-			const data = await client.get(client.projectPath(`funnels?${params}`));
+			const data = await client.get(
+				client.projectPath(
+					buildFunnelPath({
+						steps: values.steps as string,
+						days: values.days as string | undefined,
+						window: values.window as string | undefined,
+					}),
+				),
+			);
 			log(formatOutput(data, config.format));
 		},
 	);
@@ -38,7 +42,7 @@ Required:
   --steps <events>       Comma-separated event names (2-8 steps)
 
 Options:
-  --days <n>             Time period in days: 1, 7, 14, 30 (default: 30)
+  --days <n>             Time period in days: 7, 14, 30, 90 (default: 30)
   --window <seconds>     Conversion window: 3600, 21600, 86400, 604800 (default: 86400)
   --api-key <key>        API key (or FRAMEDASH_API_KEY env)
   --project-id <uuid>    Project ID (or FRAMEDASH_PROJECT_ID env)

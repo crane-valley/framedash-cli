@@ -21,10 +21,11 @@ Required:
 
 Upload options (all required together):
   --upload               Enable upload to Framedash API
-  --api-key <key>        Admin API key. Prefer FRAMEDASH_API_KEY env or
-                         --api-key-file: a key passed as --api-key is visible
-                         in the process list and shell history.
-  --api-key-file <path>  Read the admin API key from a file ('-' for stdin)
+  --api-key <key>        API key (needs the resources:write scope). Prefer
+                         FRAMEDASH_API_KEY env or --api-key-file: a key passed
+                         as --api-key is visible in the process list and shell
+                         history.
+  --api-key-file <path>  Read the API key from a file ('-' for stdin)
   --project-id <uuid>    Target project ID, or set FRAMEDASH_PROJECT_ID env
 
 Optional:

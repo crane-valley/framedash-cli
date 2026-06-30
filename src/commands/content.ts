@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { buildContentPath } from "@framedash/api-client";
 import { formatOutput } from "../lib/formatters.js";
 import { error, log, success } from "../lib/logger.js";
 import { runCommand, withSubcommands } from "../lib/run-command.js";
@@ -33,8 +34,7 @@ async function contentList(args: string[]): Promise<void> {
 			options: { type: { type: "string" } },
 		},
 		async ({ client, config, values }) => {
-			const params = values.type ? `?${new URLSearchParams({ type: values.type as string })}` : "";
-			const data = await client.get(`/api/v1/content${params}`);
+			const data = await client.get(buildContentPath({ type: values.type as string | undefined }));
 			log(formatOutput(data, config.format));
 		},
 	);
