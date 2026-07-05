@@ -65,6 +65,58 @@ describe("formatOutput", () => {
 			expect(result).not.toContain("[object Object]");
 			expect(result).toContain('"name"');
 		});
+
+		it("renders a single object with nested values as sections", () => {
+			const data = {
+				kpis: { dau: 100, sessions: 250 },
+				topEvents: [
+					{ name: "player.death", count: 42 },
+					{ name: "level.up", count: 30 },
+				],
+				dailyActiveUsers: [{ date: "2026-07-01", count: 10 }],
+			};
+			const result = formatOutput(data, "table");
+			// One section per key
+			expect(result).toContain("kpis");
+			expect(result).toContain("topEvents");
+			expect(result).toContain("dailyActiveUsers");
+			// Object section renders as key/value rows
+			expect(result).toContain("dau");
+			expect(result).toContain("100");
+			// Array-of-objects section renders as a normal table
+			expect(result).toContain("player.death");
+			expect(result).not.toContain("[object Object]");
+		});
+
+		it("flattens nested objects to dot-path columns one level deep in array sections", () => {
+			const data = {
+				profiles: [{ name: "PC", thresholds: { fps: 60, mem: 1024 } }],
+			};
+			const result = formatOutput(data, "table");
+			expect(result).toContain("thresholds.fps");
+			expect(result).toContain("60");
+			expect(result).not.toContain("[object Object]");
+		});
+
+		it("keeps a record with scalar fields plus one nested field as a one-row table", () => {
+			// Alert create/update responses are scalars plus channelIds: [] -- these
+			// must stay a single row, not fan out into per-field sections.
+			const data = { id: "a1", name: "High mem", metric: "memory", channelIds: [] };
+			const result = formatOutput(data, "table");
+			const lines = result.split("\n");
+			expect(lines).toHaveLength(3); // header + separator + one row
+			expect(lines[0]).toContain("id");
+			expect(lines[0]).toContain("channelIds");
+			expect(result).not.toContain("## id");
+		});
+
+		it("does not section or dot-path-flatten a top-level array (no regression)", () => {
+			const data = [{ id: "1", meta: { a: 1 } }];
+			const result = formatOutput(data, "table");
+			// Nested object still JSON-stringified, not flattened to meta.a
+			expect(result).toContain('"a"');
+			expect(result).not.toContain("meta.a");
+		});
 	});
 
 	describe("csv format", () => {

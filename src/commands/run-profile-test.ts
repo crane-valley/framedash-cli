@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
 import { type ApiClient, buildBuildComparePath, buildBuildsPath } from "@framedash/api-client";
 import type { CliConfig } from "../lib/config.js";
@@ -17,13 +17,21 @@ import {
 	type BuildListEntry,
 	buildEventCount,
 	buildSessionEnv,
+	planTreeKill,
 	resolveProfileIdentity,
 	SESSION_ENV_KEYS,
+	validateSeconds,
 	waitForIngest,
 } from "../lib/run-profile-test-lib.js";
 
 const DEFAULT_INGEST_TIMEOUT_S = 180;
 const DEFAULT_POLL_INTERVAL_S = 5;
+// Generous finite default so a game that never self-quits cannot hang a CI job
+// forever (the F53 failure mode); 0 disables the bound for interactive/local use.
+const DEFAULT_COMMAND_TIMEOUT_S = 1800;
+// Cap so command-timeout * 1000 stays within setTimeout's signed 32-bit delay
+// (2^31-1 ms); a larger value would be clamped to 1ms and fire almost at once.
+const MAX_COMMAND_TIMEOUT_S = Math.floor(2 ** 31 / 1000);
 
 type Values = Record<string, string | boolean | undefined>;
 
@@ -48,17 +56,19 @@ function gitOutput(args: string[]): string | undefined {
 	}
 }
 
-/** Parse a positive-seconds flag with a descriptive error, or fall back. */
-function parseSeconds(value: string | boolean | undefined, flag: string, fallback: number): number {
-	// Only a string carries a real value; undefined falls back, and a boolean
-	// (unreachable for these string flags, but typed) must not coerce to 1.
-	if (typeof value !== "string") return fallback;
-	const n = Number(value);
-	if (!Number.isFinite(n) || n <= 0) {
-		error(`--${flag} must be a positive number of seconds`);
+/** Parse a seconds-valued flag with a descriptive error, or fall back. */
+function parseSeconds(
+	value: string | boolean | undefined,
+	flag: string,
+	fallback: number,
+	opts: { allowZero?: boolean; max?: number } = {},
+): number {
+	const result = validateSeconds(value, fallback, opts);
+	if ("error" in result) {
+		error(`--${flag} ${result.error}`);
 		process.exit(1);
 	}
-	return n;
+	return result.value;
 }
 
 /**
@@ -114,21 +124,128 @@ function resolveGateOptions(values: Values, candidateBuildId: string): GateOptio
 	return { metric, thresholdPct, baseline };
 }
 
-/** Spawn the profiling command (inheriting stdio) and exit on any failure. */
-function launchProfilingRun(command: string, env: NodeJS.ProcessEnv): void {
-	const child = spawnSync(command, { shell: true, stdio: "inherit", env });
-	if (child.error) {
-		error(`Failed to launch --command: ${child.error.message}`);
+/**
+ * Terminate the launched process TREE by pid. A plain child kill leaves
+ * grandchildren behind (a game launched via the shell spawns helper processes),
+ * so use the platform-specific whole-tree strategy from planTreeKill: taskkill
+ * /T /F on win32, or a SIGKILL to the process group on POSIX (falling back to the
+ * direct pid if the group is already gone). planTreeKill returns a noop plan for a
+ * missing/non-positive pid (which would otherwise signal our own group or every
+ * process on POSIX). Best-effort: never throws.
+ */
+function killProcessTree(pid: number | undefined): void {
+	const plan = planTreeKill(process.platform, pid);
+	if (plan.platform === "noop") return;
+	if (plan.platform === "win32") {
+		spawnSync(plan.command, plan.args, { stdio: "ignore" });
+		return;
+	}
+	try {
+		process.kill(plan.groupPid, "SIGKILL");
+	} catch {
+		try {
+			// -groupPid is the validated positive child pid; fall back to it directly.
+			process.kill(-plan.groupPid, "SIGKILL");
+		} catch {
+			// The process (group) is already gone; nothing left to kill.
+		}
+	}
+}
+
+/** Outcome of a profiling run (mirrors the fields we branch on). */
+interface ProfilingRunResult {
+	status: number | null;
+	signal: NodeJS.Signals | null;
+	/** True when the run was killed for exceeding --command-timeout. */
+	timedOut: boolean;
+}
+
+/**
+ * Spawn the profiling command (inheriting stdio) and resolve when it exits.
+ * Bounds the run with an overall timeout: on win32 the child is the shell, whose
+ * whole tree taskkill terminates; on POSIX the child is spawned detached so we
+ * can signal its process group. timeoutMs <= 0 disables the bound. Rejects only
+ * on a spawn error (ENOENT etc.).
+ */
+function runProfilingCommand(
+	command: string,
+	env: NodeJS.ProcessEnv,
+	timeoutMs: number,
+): Promise<ProfilingRunResult> {
+	return new Promise((resolve, reject) => {
+		const child: ChildProcess = spawn(command, {
+			shell: true,
+			stdio: "inherit",
+			env,
+			// POSIX: run in a new process group so killProcessTree can signal the whole
+			// group. win32 has no process groups here; taskkill /T handles the tree.
+			detached: process.platform !== "win32",
+		});
+		let timedOut = false;
+		let timer: NodeJS.Timeout | undefined;
+		// A detached POSIX child does NOT share the terminal's signals, so a Ctrl-C or
+		// CI cancellation that terminates THIS CLI would orphan the game's process
+		// group. Kill the tree on those signals first, then exit with the conventional
+		// 128 + signal-number code so the exit status still reflects the signal.
+		const forwardedSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+		const cleanup = (): void => {
+			if (timer) clearTimeout(timer);
+			for (const s of forwardedSignals) process.off(s, onSignal);
+		};
+		const onSignal = (signal: NodeJS.Signals): void => {
+			cleanup();
+			killProcessTree(child.pid);
+			process.exit(128 + (osConstants.signals[signal] ?? 0));
+		};
+		for (const s of forwardedSignals) process.on(s, onSignal);
+		if (timeoutMs > 0) {
+			timer = setTimeout(() => {
+				timedOut = true;
+				killProcessTree(child.pid);
+			}, timeoutMs);
+		}
+		child.on("error", (err) => {
+			cleanup();
+			reject(err);
+		});
+		child.on("exit", (code, signal) => {
+			cleanup();
+			resolve({ status: code, signal, timedOut });
+		});
+	});
+}
+
+/** Launch the profiling command and exit on any failure (or timeout). */
+async function launchProfilingRun(
+	command: string,
+	env: NodeJS.ProcessEnv,
+	timeoutMs: number,
+): Promise<void> {
+	let result: ProfilingRunResult;
+	try {
+		result = await runProfilingCommand(command, env, timeoutMs);
+	} catch (err) {
+		error(`Failed to launch --command: ${err instanceof Error ? err.message : String(err)}`);
 		process.exit(1);
 	}
-	if (child.signal) {
-		error(`Profiling command was terminated by signal ${child.signal}.`);
-		// Conventional 128 + signal number so CI sees a meaningful non-zero code.
-		process.exit(128 + (osConstants.signals[child.signal] ?? 0));
+	// A timeout is incomplete data: fail closed WITHOUT gating, same philosophy as a
+	// non-zero exit. Checked first because the kill also sets a signal on the child.
+	if (result.timedOut) {
+		error(
+			`Profiling command exceeded the --command-timeout of ${timeoutMs / 1000}s and was killed; ` +
+				"not gating on incomplete data. If the game does not exit on its own, make your " +
+				"automation quit when the run finishes, or raise --command-timeout (0 disables the bound).",
+		);
+		process.exit(1);
 	}
-	if (typeof child.status === "number" && child.status !== 0) {
-		error(`Profiling command exited with code ${child.status}; not gating on incomplete data.`);
-		process.exit(child.status);
+	if (result.signal) {
+		error(`Profiling command was terminated by signal ${result.signal}.`);
+		// Conventional 128 + signal number so CI sees a meaningful non-zero code.
+		process.exit(128 + (osConstants.signals[result.signal] ?? 0));
+	}
+	if (typeof result.status === "number" && result.status !== 0) {
+		error(`Profiling command exited with code ${result.status}; not gating on incomplete data.`);
+		process.exit(result.status);
 	}
 }
 
@@ -209,7 +326,10 @@ async function awaitIngest(
 		error(
 			`Build '${buildId}' did not ingest fresh events within ${timeoutMs / 1000}s. ` +
 				"The SDK may not have flushed, or ingest/aggregation is lagging. " +
-				"Increase --ingest-timeout, or check with 'framedash builds'.",
+				"Increase --ingest-timeout, or check with 'framedash builds'. " +
+				`Also confirm the game picked up the awaited build id: --build-id reaches the game via the ` +
+				`exported FRAMEDASH_BUILD_ID env var and the SDK's BeginAutomatedSessionFromEnvironment() ` +
+				`auto-session pickup -- a game that hardcodes its buildId will never match '${buildId}'.`,
 		);
 		process.exit(1);
 	}
@@ -311,6 +431,7 @@ export async function runProfileTest(args: string[]): Promise<void> {
 				branch: { type: "string" },
 				commit: { type: "string" },
 				scenario: { type: "string" },
+				"command-timeout": { type: "string" },
 				"ingest-timeout": { type: "string" },
 				"poll-interval": { type: "string" },
 				"skip-wait": { type: "boolean" },
@@ -356,6 +477,13 @@ export async function runProfileTest(args: string[]): Promise<void> {
 			// Validate everything up front so a misconfig fails before we spend minutes
 			// running the game only to reject the result.
 			const gate = resolveGateOptions(values, identity.buildId);
+			// Bounds only the launched game/profiling process, NOT the ingest wait
+			// (--ingest-timeout covers that separately). 0 disables the bound.
+			const commandTimeoutMs =
+				parseSeconds(values["command-timeout"], "command-timeout", DEFAULT_COMMAND_TIMEOUT_S, {
+					allowZero: true,
+					max: MAX_COMMAND_TIMEOUT_S,
+				}) * 1000;
 			const ingestTimeoutMs =
 				parseSeconds(values["ingest-timeout"], "ingest-timeout", DEFAULT_INGEST_TIMEOUT_S) * 1000;
 			const pollIntervalMs =
@@ -368,7 +496,9 @@ export async function runProfileTest(args: string[]): Promise<void> {
 			const skipWait = Boolean(values["skip-wait"]);
 			const pollClient = skipWait
 				? client
-				: createClient(config.baseUrl, config.apiKey, config.projectId, { throwOnError: true });
+				: createClient(config.baseUrl, config.credential, config.projectId, {
+						throwOnError: true,
+					});
 
 			// Snapshot the candidate's event count BEFORE the run (only when we will
 			// wait), so the ingest wait can require fresh events rather than accepting
@@ -410,7 +540,7 @@ export async function runProfileTest(args: string[]): Promise<void> {
 						"events:write key separately, or pass the gate key via --api-key/--api-key-file.",
 				);
 			}
-			launchProfilingRun(command, childEnv);
+			await launchProfilingRun(command, childEnv, commandTimeoutMs);
 
 			// 2) Wait for the candidate build's perf events to land (unless skipped).
 			if (!skipWait) {
@@ -454,6 +584,10 @@ BeginAutomatedSessionFromEnvironment() picks them up automatically:
   FRAMEDASH_GIT_BRANCH     ci.branch attribute
   FRAMEDASH_GIT_COMMIT     ci.commit attribute
   FRAMEDASH_TEST_SCENARIO  ci.scenario attribute
+The build id from --build-id (or the git default) reaches the game ONLY via the
+exported FRAMEDASH_BUILD_ID env var, which BeginAutomatedSessionFromEnvironment()
+reads. A game that hardcodes its buildId will never match the awaited build, so
+the ingest wait will time out -- do not hardcode the SDK build id in a CI build.
 FRAMEDASH_PROJECT_ID / FRAMEDASH_BASE_URL are forwarded so the build targets the
 same project the gate queries. The gate uses an analytics:read key while your
 game needs a separate events:write ingest key: pass the gate key with
@@ -462,6 +596,11 @@ FRAMEDASH_API_KEY, so the gate key does not get inherited as the game's key.
 
 Required:
   --command <cmd>        Game/profiling command to launch (run via the shell)
+
+Run bound (kills the launched process tree on timeout so a game that never
+self-quits cannot hang a CI job forever; a timeout fails the run without gating):
+  --command-timeout <s>  Max seconds the launched command may run (default: 1800,
+                         0 disables the bound)
 
 Build identity (each defaults as noted; exported to the child):
   --build-id <id>        Candidate build_id (default: --commit, else git HEAD)

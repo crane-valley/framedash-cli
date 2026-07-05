@@ -98,6 +98,73 @@ export function buildSessionEnv(identity: ProfileIdentity): Record<string, strin
 	return env;
 }
 
+/** Result of validating a "seconds" CLI option value. */
+export type SecondsValidation = { value: number } | { error: string };
+
+/**
+ * Validate a seconds-valued option. Returns the parsed number, or an error
+ * message describing why it is invalid (the caller adds the --flag prefix and
+ * decides how to surface it). A non-string value (unset, or the boolean parseArgs
+ * yields for a value-less flag) falls back to `fallback`. With `allowZero` the
+ * value may be 0 (used by --command-timeout, where 0 disables the bound);
+ * otherwise it must be strictly positive (as --ingest-timeout / --poll-interval
+ * require).
+ */
+export function validateSeconds(
+	value: string | boolean | undefined,
+	fallback: number,
+	opts: { allowZero?: boolean; max?: number } = {},
+): SecondsValidation {
+	if (typeof value !== "string") return { value: fallback };
+	const baseError = opts.allowZero
+		? "must be a non-negative number of seconds (0 disables the bound)"
+		: "must be a positive number of seconds";
+	// Reject empty / whitespace explicitly: Number("") and Number(" ") are 0, which
+	// would silently DISABLE the bound under allowZero (a fail-closed footgun for a
+	// mistyped --command-timeout= value), so treat a blank value as invalid.
+	const trimmed = value.trim();
+	if (trimmed === "") return { error: baseError };
+	const n = Number(trimmed);
+	const minOk = opts.allowZero ? n >= 0 : n > 0;
+	if (!Number.isFinite(n) || !minOk) return { error: baseError };
+	// Guard against a value so large that timeoutMs overflows setTimeout's signed
+	// 32-bit delay, which Node clamps to 1ms -- an "effectively unbounded" input
+	// would then fire almost immediately and kill the run at once.
+	if (opts.max !== undefined && n > opts.max) {
+		return { error: `must be at most ${opts.max} seconds` };
+	}
+	return { value: n };
+}
+
+/**
+ * Platform-specific plan for terminating a launched process TREE by pid. A plain
+ * kill of the direct child orphans its grandchildren (a Unity/UE5 player launched
+ * via the shell spawns helper processes that survive), so on win32 we shell out
+ * to `taskkill /T /F` (whole tree, forced) and on POSIX we signal the child's
+ * process GROUP (the negative pid, valid because the child is spawned detached
+ * into its own group). Pure so the argv/decision is unit-testable without
+ * spawning anything.
+ */
+export type TreeKillPlan =
+	| { platform: "win32"; command: "taskkill"; args: string[] }
+	| { platform: "posix"; groupPid: number }
+	| { platform: "noop" };
+
+export function planTreeKill(platform: NodeJS.Platform, pid: number | undefined): TreeKillPlan {
+	// A missing, non-integer, or non-positive pid is UNSAFE to kill: on POSIX,
+	// process.kill(0, sig) signals the caller's OWN process group and kill(-1, sig)
+	// signals every process the user owns, either of which could take down this CLI
+	// or the CI runner itself. Refuse to act rather than risk it.
+	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
+		return { platform: "noop" };
+	}
+	if (platform === "win32") {
+		return { platform: "win32", command: "taskkill", args: ["/pid", String(pid), "/t", "/f"] };
+	}
+	// Negative pid targets the whole process group (see detached spawn in the command).
+	return { platform: "posix", groupPid: -pid };
+}
+
 /** Minimal shape of a builds-list row (mirrors apps/web BuildInfo). */
 export interface BuildListEntry {
 	build_id: string;

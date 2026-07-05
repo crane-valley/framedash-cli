@@ -25,18 +25,27 @@ describe("error handling", () => {
 		delete process.env.FRAMEDASH_FORMAT;
 	});
 
-	describe("missing API key", () => {
-		it("exits with error when no API key from env or flag", async () => {
+	describe("missing credentials", () => {
+		it("exits with an error mentioning framedash login when nothing is configured", async () => {
+			// Point the OAuth token store at an empty location so the test can
+			// never pick up a real stored login from the developer's machine.
+			const previousXdg = process.env.XDG_CONFIG_HOME;
+			process.env.XDG_CONFIG_HOME = `${process.cwd()}/definitely-missing-config-home`;
 			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
 				throw new Error("process.exit");
 			}) as never);
 
-			await expect(auth([])).rejects.toThrow("process.exit");
-			expect(loggerModule.error).toHaveBeenCalledWith(
-				"--api-key, --api-key-file, or FRAMEDASH_API_KEY env is required",
-			);
-
-			exitSpy.mockRestore();
+			try {
+				await expect(auth([])).rejects.toThrow("process.exit");
+				expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("framedash login"));
+			} finally {
+				exitSpy.mockRestore();
+				if (previousXdg === undefined) {
+					delete process.env.XDG_CONFIG_HOME;
+				} else {
+					process.env.XDG_CONFIG_HOME = previousXdg;
+				}
+			}
 		});
 	});
 
@@ -92,7 +101,7 @@ describe("error handling", () => {
 
 			expect(createClientModule.createClient).toHaveBeenCalledWith(
 				"https://app.framedash.dev",
-				"fd_from_env",
+				{ kind: "api-key", apiKey: "fd_from_env", source: "env" },
 				"",
 			);
 		});
@@ -114,7 +123,7 @@ describe("error handling", () => {
 
 			expect(createClientModule.createClient).toHaveBeenCalledWith(
 				"https://app.framedash.dev",
-				"fd_from_flag",
+				{ kind: "api-key", apiKey: "fd_from_flag", source: "flag" },
 				"",
 			);
 		});
@@ -137,7 +146,7 @@ describe("error handling", () => {
 
 			expect(createClientModule.createClient).toHaveBeenCalledWith(
 				"https://staging.framedash.dev",
-				"fd_test_key",
+				{ kind: "api-key", apiKey: "fd_test_key", source: "env" },
 				"",
 			);
 		});

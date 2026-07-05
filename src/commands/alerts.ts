@@ -21,8 +21,9 @@ Create a new alert rule.
 
 Required:
   --name <name>                    Alert rule name
-  --map-id <uuid>                  Map ID
+  --map-id <uuid>                  Map ID (list IDs with 'framedash maps list')
   --threshold-profile-id <uuid>    Threshold profile ID
+                                   (list IDs with 'framedash threshold-profiles list')
   --metric <metric>                Metric name
   --threshold-level <level>        Threshold level
   --fail-percentage <n>            Failure percentage (0-100)

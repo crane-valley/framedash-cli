@@ -48,11 +48,11 @@ export async function runCommand(
 	if (opts.noProject) {
 		const baseConfig = resolveConfigWithoutProject(typedValues);
 		const config: CliConfig = { ...baseConfig, projectId: "" };
-		const client = createClient(config.baseUrl, config.apiKey, "");
+		const client = createClient(config.baseUrl, config.credential, "");
 		await handler({ config, client, values: typedValues, positionals });
 	} else {
 		const config = resolveConfig(typedValues);
-		const client = createClient(config.baseUrl, config.apiKey, config.projectId);
+		const client = createClient(config.baseUrl, config.credential, config.projectId);
 		await handler({ config, client, values: typedValues, positionals });
 	}
 }

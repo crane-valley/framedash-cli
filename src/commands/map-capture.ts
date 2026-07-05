@@ -2,10 +2,11 @@ import type { Stats } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { resolveApiKey } from "../lib/config.js";
+import { resolveCredential } from "../lib/config.js";
+import { getSharedOAuthManager } from "../lib/create-client.js";
 import { error, log, success } from "../lib/logger.js";
 import { mapCaptureMetadataSchema } from "../lib/metadata.js";
-import { uploadMapCapture } from "../lib/uploader.js";
+import { type UploadCredential, uploadMapCapture } from "../lib/uploader.js";
 
 const ALLOWED_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
@@ -24,7 +25,9 @@ Upload options (all required together):
   --api-key <key>        API key (needs the resources:write scope). Prefer
                          FRAMEDASH_API_KEY env or --api-key-file: a key passed
                          as --api-key is visible in the process list and shell
-                         history.
+                         history. Without any API key, a stored browser login
+                         ('framedash login --scopes "analytics:read
+                         resources:write"') is used.
   --api-key-file <path>  Read the API key from a file ('-' for stdin)
   --project-id <uuid>    Target project ID, or set FRAMEDASH_PROJECT_ID env
 
@@ -62,28 +65,55 @@ export async function mapCaptureCommand(args: string[]): Promise<void> {
 		return;
 	}
 
-	// Resolve the API key only when an upload will actually run, so a validation
+	// Resolve credentials only when an upload will actually run, so a validation
 	// dry run with --api-key-file - does not block on stdin (or fail on a missing
-	// file) for a key it never uses.
+	// file) for a credential it never uses.
 	const willUpload = Boolean(values.upload) && !values["dry-run"];
+	const baseUrl = values["base-url"] ?? "https://app.framedash.dev";
 	const result = await mapCapture({
 		inputDir: values["input-dir"],
 		upload: values.upload,
 		dryRun: values["dry-run"],
-		apiKey: willUpload ? resolveApiKey(values) : undefined,
+		credential: willUpload ? resolveUploadCredential(values, baseUrl) : undefined,
 		projectId: values["project-id"] ?? process.env.FRAMEDASH_PROJECT_ID,
-		baseUrl: values["base-url"] ?? "https://app.framedash.dev",
+		baseUrl,
 	});
 	if (!result.ok) {
 		process.exit(1);
 	}
 }
 
+/**
+ * Map the CLI-wide credential resolution (api-key flag/file/env > stored
+ * OAuth login) onto the uploader's credential shape. OAuth rides on the
+ * process-shared token manager so uploads participate in the same
+ * refresh-rotation state as every other client.
+ */
+function resolveUploadCredential(
+	values: Record<string, unknown>,
+	baseUrl: string,
+): UploadCredential | undefined {
+	let resolved: ReturnType<typeof resolveCredential>;
+	try {
+		resolved = resolveCredential(values, baseUrl);
+	} catch (err) {
+		// resolveCredential parses the base URL; map-capture does not pre-validate
+		// --base-url, so surface a clean CLI error instead of an uncaught throw.
+		error(`Invalid --base-url: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+	if (!resolved) return undefined;
+	if (resolved.kind === "api-key") {
+		return { kind: "api-key", apiKey: resolved.apiKey };
+	}
+	return { kind: "oauth", manager: getSharedOAuthManager(baseUrl, resolved) };
+}
+
 export type MapCaptureOptions = {
 	inputDir: string | undefined;
 	upload: boolean | undefined;
 	dryRun: boolean | undefined;
-	apiKey: string | undefined;
+	credential: UploadCredential | undefined;
 	projectId: string | undefined;
 	baseUrl: string | undefined;
 };
@@ -106,8 +136,11 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 	const dryRun = Boolean(opts.dryRun);
 
 	if (upload && !dryRun) {
-		if (!opts.apiKey) {
-			error("--api-key (or FRAMEDASH_API_KEY env) is required with --upload");
+		if (!opts.credential) {
+			error(
+				"--api-key, --api-key-file, FRAMEDASH_API_KEY, or a stored 'framedash login' " +
+					"is required with --upload",
+			);
 			return fail;
 		}
 		if (!opts.projectId) {
@@ -215,7 +248,7 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 				const uploadResult = await uploadMapCapture({
 					metadata,
 					imagePath,
-					apiKey: opts.apiKey as string,
+					credential: opts.credential as UploadCredential,
 					projectId: opts.projectId as string,
 					baseUrl: opts.baseUrl ?? "https://app.framedash.dev",
 				});

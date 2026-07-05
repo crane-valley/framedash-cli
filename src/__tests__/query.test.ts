@@ -1,9 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiClient } from "@framedash/api-client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "../commands/query.js";
+import { saveStoredEntry } from "../lib/oauth/token-store.js";
 
 vi.mock("../lib/logger.js", () => ({
 	log: vi.fn(),
@@ -50,6 +52,42 @@ describe("query command", () => {
 			} catch {
 				// ignore cleanup errors
 			}
+		}
+	});
+
+	it("refuses to run on a stored OAuth login: data:admin is not grantable via OAuth", async () => {
+		// No API key anywhere; only a stored `framedash login` for the origin.
+		delete process.env.FRAMEDASH_API_KEY;
+		const previousXdg = process.env.XDG_CONFIG_HOME;
+		const configHome = mkdtempSync(join(tmpdir(), "framedash-cli-query-"));
+		process.env.XDG_CONFIG_HOME = configHome;
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+			throw new Error("process.exit");
+		}) as never);
+		try {
+			await saveStoredEntry("https://app.framedash.dev", {
+				access_token: "fdat_test_access",
+				refresh_token: "fdrt_test_refresh",
+				expires_at: Date.now() + 3_600_000,
+				scope: "analytics:read",
+			});
+			const client = mockClient();
+			vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+			await expect(query(["SELECT 1"])).rejects.toThrow("process.exit");
+
+			expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("data:admin"));
+			expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("FRAMEDASH_API_KEY"));
+			// Fails early: no request is ever sent with the doomed credential.
+			expect(client.post).not.toHaveBeenCalled();
+		} finally {
+			exitSpy.mockRestore();
+			if (previousXdg === undefined) {
+				delete process.env.XDG_CONFIG_HOME;
+			} else {
+				process.env.XDG_CONFIG_HOME = previousXdg;
+			}
+			rmSync(configHome, { recursive: true, force: true });
 		}
 	});
 

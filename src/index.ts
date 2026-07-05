@@ -9,7 +9,10 @@ const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 const HELP = `Usage: framedash <command> [options]
 
 Commands:
-  auth           Verify API key and list projects
+  login          Sign in via the browser (interactive OAuth; CI should use
+                 the FRAMEDASH_API_KEY env var instead)
+  logout         Revoke and remove a stored browser login
+  auth           Verify credentials, show their source, and list projects
   status         Show project status and key metrics
   dashboard      Show dashboard metrics
   retention      Show player retention cohorts
@@ -20,6 +23,7 @@ Commands:
   query          Execute a read-only ClickHouse query
   alerts         Manage alert rules (list, create, update, delete)
   maps           Manage maps (list, delete)
+  threshold-profiles  List threshold profiles (perf budgets for alerts)
   content        Manage content registry (list, import, delete)
   map-capture    Upload captured map images
 
@@ -28,6 +32,8 @@ Global Options:
                          a key passed as --api-key is visible in the process
                          list and shell history.
   --api-key-file <path>  Read the API key from a file ('-' for stdin)
+                         Without any API key, commands fall back to the OAuth
+                         tokens stored by 'framedash login' for the base URL.
   --project-id <uuid>    Project ID (or FRAMEDASH_PROJECT_ID env)
   --base-url <url>       API base URL (default: https://app.framedash.dev)
   --format <fmt>         Output format: json, table, csv (default: json)
@@ -38,6 +44,8 @@ Run 'framedash <command> --help' for command-specific options.`;
 
 /** Type-safe command registry — typos in export names become build-time errors. */
 const COMMANDS: Record<string, () => Promise<(args: string[]) => Promise<void>>> = {
+	login: () => import("./commands/login.js").then((m) => m.login),
+	logout: () => import("./commands/logout.js").then((m) => m.logout),
 	auth: () => import("./commands/auth.js").then((m) => m.auth),
 	status: () => import("./commands/status.js").then((m) => m.status),
 	dashboard: () => import("./commands/dashboard.js").then((m) => m.dashboard),
@@ -49,6 +57,8 @@ const COMMANDS: Record<string, () => Promise<(args: string[]) => Promise<void>>>
 	query: () => import("./commands/query.js").then((m) => m.query),
 	alerts: () => import("./commands/alerts.js").then((m) => m.alerts),
 	maps: () => import("./commands/maps.js").then((m) => m.maps),
+	"threshold-profiles": () =>
+		import("./commands/threshold-profiles.js").then((m) => m.thresholdProfiles),
 	content: () => import("./commands/content.js").then((m) => m.content),
 	"map-capture": () => import("./commands/map-capture.js").then((m) => m.mapCaptureCommand),
 };

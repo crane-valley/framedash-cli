@@ -49,7 +49,21 @@ describe("auth command", () => {
 
 		expect(client.get).toHaveBeenCalledWith("/api/v1/projects");
 		expect(loggerModule.success).toHaveBeenCalledWith("API key is valid");
+		expect(loggerModule.success).toHaveBeenCalledWith(
+			"Credential source: API key from FRAMEDASH_API_KEY env",
+		);
 		expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(projects, null, 2));
+	});
+
+	it("reports the flag as the credential source when --api-key is passed", async () => {
+		const client = mockClient({ get: vi.fn().mockResolvedValue([]) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await auth(["--api-key", "fd_override_key"]);
+
+		expect(loggerModule.success).toHaveBeenCalledWith(
+			"Credential source: API key from --api-key flag",
+		);
 	});
 
 	it("does not require --project-id", async () => {
@@ -60,7 +74,7 @@ describe("auth command", () => {
 
 		expect(createClientModule.createClient).toHaveBeenCalledWith(
 			"https://app.framedash.dev",
-			"fd_test_key",
+			{ kind: "api-key", apiKey: "fd_test_key", source: "env" },
 			"",
 		);
 	});
@@ -73,7 +87,7 @@ describe("auth command", () => {
 
 		expect(createClientModule.createClient).toHaveBeenCalledWith(
 			"https://app.framedash.dev",
-			"fd_override_key",
+			{ kind: "api-key", apiKey: "fd_override_key", source: "flag" },
 			"",
 		);
 	});
@@ -86,7 +100,7 @@ describe("auth command", () => {
 
 		expect(createClientModule.createClient).toHaveBeenCalledWith(
 			"https://custom.example.com",
-			"fd_test_key",
+			{ kind: "api-key", apiKey: "fd_test_key", source: "env" },
 			"",
 		);
 	});

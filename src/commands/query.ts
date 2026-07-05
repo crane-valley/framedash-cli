@@ -16,6 +16,18 @@ export async function query(args: string[]): Promise<void> {
 			allowPositionals: true,
 		},
 		async ({ client, config, values, positionals }) => {
+			// The raw-query endpoint requires the data:admin scope, which OAuth
+			// grants can never carry (OAUTH_ALLOWED_SCOPES is deliberately limited
+			// to analytics:read + resources:write). Falling back to a stored login
+			// would always 403, so fail early with the actionable fix instead.
+			if (config.credential.kind === "oauth") {
+				error(
+					"framedash query requires an API key with the data:admin scope. OAuth login " +
+						"cannot grant data:admin; set FRAMEDASH_API_KEY or use --api-key / --api-key-file.",
+				);
+				process.exit(1);
+			}
+
 			if (values.file && positionals.length > 0) {
 				error("Cannot use both --file and a positional SQL argument. Provide one or the other.");
 				process.exit(1);
@@ -55,6 +67,9 @@ const HELP = `Usage: framedash query <sql> [options]
        framedash query --file query.sql [options]
 
 Execute a read-only ClickHouse query.
+
+Requires an API key with the data:admin scope ('framedash login' OAuth
+tokens cannot be used: data:admin is not grantable via OAuth).
 
 Arguments:
   <sql>                  SQL query string

@@ -1,4 +1,5 @@
-import type { SpawnSyncReturns } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import type { ApiClient } from "@framedash/api-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runProfileTest } from "../commands/run-profile-test.js";
@@ -6,11 +7,11 @@ import type { ApiBuildComparison, ApiMetricDiff } from "../lib/perf-diff-eval.js
 import type { BuildListEntry } from "../lib/run-profile-test-lib.js";
 
 vi.mock("node:child_process", () => ({
-	// git rev-parse -> a stable fake SHA/branch; spawnSync -> exit 0 by default.
+	// git rev-parse -> a stable fake SHA/branch. spawn/spawnSync are wired up in
+	// beforeEach (the factory cannot reference module-scope helpers -- it is hoisted).
 	execFileSync: vi.fn(() => "gitsha\n"),
-	spawnSync: vi.fn(
-		() => ({ status: 0, signal: null, error: undefined }) as SpawnSyncReturns<string>,
-	),
+	spawn: vi.fn(),
+	spawnSync: vi.fn(),
 }));
 
 vi.mock("../lib/logger.js", () => ({
@@ -24,9 +25,36 @@ vi.mock("../lib/create-client.js", () => ({
 	createClient: vi.fn(),
 }));
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as createClientModule from "../lib/create-client.js";
 import * as loggerModule from "../lib/logger.js";
+
+interface FakeChildOpts {
+	status?: number | null;
+	signal?: NodeJS.Signals | null;
+	error?: Error;
+	/** When true, never auto-emits: the test drives exit/error itself. */
+	hang?: boolean;
+	pid?: number;
+}
+
+/**
+ * A minimal ChildProcess stand-in: an EventEmitter with a pid and kill(). Unless
+ * `hang` is set it emits "exit" (or "error") on the next microtask so the runner's
+ * exit-listener resolves without real timers.
+ */
+function makeChild(opts: FakeChildOpts = {}): ChildProcess & EventEmitter {
+	const child = new EventEmitter() as ChildProcess & EventEmitter;
+	(child as { pid?: number }).pid = opts.pid ?? 4321;
+	(child as { kill: unknown }).kill = vi.fn();
+	if (!opts.hang) {
+		queueMicrotask(() => {
+			if (opts.error) child.emit("error", opts.error);
+			else child.emit("exit", opts.status ?? 0, opts.signal ?? null);
+		});
+	}
+	return child;
+}
 
 function mockClient(overrides: Partial<ApiClient> = {}): ApiClient {
 	return {
@@ -75,11 +103,10 @@ beforeEach(() => {
 	delete process.env.FRAMEDASH_GIT_BRANCH;
 	// Restore the default mock behavior cleared above.
 	vi.mocked(execFileSync).mockReturnValue("gitsha\n");
-	vi.mocked(spawnSync).mockReturnValue({
-		status: 0,
-		signal: null,
-		error: undefined,
-	} as SpawnSyncReturns<string>);
+	// Default: the launched command exits 0 on the next microtask.
+	vi.mocked(spawn).mockImplementation(() => makeChild());
+	// spawnSync is only used by the win32 tree-kill path; a no-op return is fine.
+	vi.mocked(spawnSync).mockReturnValue({} as never);
 });
 
 describe("run-profile-test command", () => {
@@ -92,7 +119,7 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).toHaveBeenCalledWith(
 			expect.stringContaining("--command is required"),
 		);
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
@@ -105,7 +132,7 @@ describe("run-profile-test command", () => {
 			runProfileTest(["--command", "game", "--build-id", "cand", "--fail-on-regression"]),
 		).rejects.toThrow("process.exit");
 		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("requires --baseline"));
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
@@ -118,7 +145,7 @@ describe("run-profile-test command", () => {
 			runProfileTest(["--command", "game", "--build-id", "cand", "--baseline", "cand"]),
 		).rejects.toThrow("process.exit");
 		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("must differ"));
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
@@ -145,7 +172,7 @@ describe("run-profile-test command", () => {
 			"smoke",
 		]);
 
-		expect(spawnSync).toHaveBeenCalledWith(
+		expect(spawn).toHaveBeenCalledWith(
 			"game --headless",
 			expect.objectContaining({
 				shell: true,
@@ -167,11 +194,7 @@ describe("run-profile-test command", () => {
 
 	it("propagates a non-zero exit code from the profiling command", async () => {
 		const { restore, spy } = expectExit();
-		vi.mocked(spawnSync).mockReturnValue({
-			status: 7,
-			signal: null,
-			error: undefined,
-		} as SpawnSyncReturns<string>);
+		vi.mocked(spawn).mockImplementation(() => makeChild({ status: 7 }));
 		const client = mockClient({ get: vi.fn() });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -197,7 +220,7 @@ describe("run-profile-test command", () => {
 			expect.stringContaining("Could not read the build's pre-run event count"),
 		);
 		// Aborted before launching the game.
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
@@ -211,7 +234,7 @@ describe("run-profile-test command", () => {
 			runProfileTest(["--command", "game", "--api-key", "k", "--build-id", "cand"]),
 		).rejects.toThrow("process.exit");
 		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("unexpected response"));
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
@@ -232,7 +255,7 @@ describe("run-profile-test command", () => {
 			"--skip-wait",
 		]);
 
-		const opts = vi.mocked(spawnSync).mock.calls[0]?.[1] as unknown as
+		const opts = vi.mocked(spawn).mock.calls[0]?.[1] as unknown as
 			| { env?: NodeJS.ProcessEnv }
 			| undefined;
 		expect(opts?.env?.FRAMEDASH_BUILD_ID).toBe("cand");
@@ -248,7 +271,7 @@ describe("run-profile-test command", () => {
 
 		await runProfileTest(["--command", "game", "--build-id", "cand", "--skip-wait"]);
 
-		const opts = vi.mocked(spawnSync).mock.calls[0]?.[1] as unknown as
+		const opts = vi.mocked(spawn).mock.calls[0]?.[1] as unknown as
 			| { env?: NodeJS.ProcessEnv }
 			| undefined;
 		expect(opts?.env?.FRAMEDASH_API_KEY).toBeUndefined();
@@ -365,7 +388,96 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).toHaveBeenCalledWith(
 			expect.stringContaining("--ingest-timeout must be a positive number"),
 		);
-		expect(spawnSync).not.toHaveBeenCalled();
+		expect(spawn).not.toHaveBeenCalled();
+		restore();
+	});
+
+	it("rejects a negative --command-timeout before launching (0 is allowed)", async () => {
+		const { restore } = expectExit();
+		const client = mockClient();
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		// Use the `=` form: bare `--command-timeout -1` is parsed by parseArgs as an
+		// ambiguous option (same as the --limit note in e2e-cli-testing.md).
+		await expect(
+			runProfileTest(["--command", "game", "--build-id", "cand", "--command-timeout=-1"]),
+		).rejects.toThrow("process.exit");
+		expect(loggerModule.error).toHaveBeenCalledWith(
+			expect.stringContaining("--command-timeout must be a non-negative number"),
+		);
+		expect(spawn).not.toHaveBeenCalled();
+		restore();
+	});
+
+	it("kills the process tree and fails closed WITHOUT gating on --command-timeout", async () => {
+		vi.useFakeTimers();
+		const { restore, spy } = expectExit();
+		// Spy the POSIX group-kill path; the win32 path shells out via spawnSync.
+		const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+		// The game never exits on its own; the test drives its (post-kill) exit.
+		const child = makeChild({ hang: true, pid: 4321 });
+		vi.mocked(spawn).mockReturnValue(child);
+		// With --baseline set, a CLEAN run would call the compare API. --skip-wait
+		// removes the pre-run snapshot read, so ANY client.get would be the gate
+		// compare -- asserting it is never called proves the timeout aborted BEFORE
+		// gating (fail-closed), not merely that a no-baseline run does no compare.
+		const client = mockClient({ get: vi.fn() });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		const run = runProfileTest([
+			"--command",
+			"game",
+			"--build-id",
+			"cand",
+			"--baseline",
+			"base",
+			"--skip-wait",
+			"--command-timeout",
+			"1",
+		]).catch((err: unknown) => err);
+
+		// Fire the 1s command-timeout; the handler kills the tree.
+		await vi.advanceTimersByTimeAsync(1000);
+		// The killed process then reports its exit (SIGKILL), resolving the runner.
+		child.emit("exit", null, "SIGKILL");
+		const outcome = await run;
+
+		expect(outcome).toBeInstanceOf(Error);
+		expect((outcome as Error).message).toBe("process.exit");
+		expect(spy).toHaveBeenCalledWith(1);
+		expect(loggerModule.error).toHaveBeenCalledWith(
+			expect.stringContaining("exceeded the --command-timeout"),
+		);
+		// The whole tree was killed via the platform-specific strategy.
+		if (process.platform === "win32") {
+			expect(spawnSync).toHaveBeenCalledWith(
+				"taskkill",
+				["/pid", "4321", "/t", "/f"],
+				expect.anything(),
+			);
+		} else {
+			expect(killSpy).toHaveBeenCalledWith(-4321, "SIGKILL");
+		}
+		// Fail closed: aborted before the perf-diff compare (the gate API is untouched).
+		expect(client.get).not.toHaveBeenCalled();
+		killSpy.mockRestore();
+		vi.useRealTimers();
+		restore();
+	});
+
+	it("rejects a blank --command-timeout instead of silently disabling the bound", async () => {
+		const { restore } = expectExit();
+		const client = mockClient();
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		// Number("") === 0 would otherwise disable the bound under allowZero.
+		await expect(
+			runProfileTest(["--command", "game", "--build-id", "cand", "--command-timeout="]),
+		).rejects.toThrow("process.exit");
+		expect(loggerModule.error).toHaveBeenCalledWith(
+			expect.stringContaining("--command-timeout must be a non-negative number"),
+		);
+		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 });

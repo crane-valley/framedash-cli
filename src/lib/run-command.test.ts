@@ -55,7 +55,7 @@ describe("runCommand", () => {
 		// biome-ignore lint/style/noNonNullAssertion: test asserts call count above
 		const ctx = handler.mock.calls[0]![0];
 		expect(ctx.config).toEqual({
-			apiKey: "test-key",
+			credential: { kind: "api-key", apiKey: "test-key", source: "env" },
 			projectId: "test-project",
 			baseUrl: "https://app.framedash.dev",
 			format: "json",
@@ -97,11 +97,11 @@ describe("runCommand", () => {
 		expect(handler).toHaveBeenCalledTimes(1);
 		// biome-ignore lint/style/noNonNullAssertion: test asserts call count above
 		const ctx = handler.mock.calls[0]![0];
-		expect(ctx.config.apiKey).toBe("test-key");
+		expect(ctx.config.credential).toEqual({ kind: "api-key", apiKey: "test-key", source: "env" });
 		expect(ctx.config.projectId).toBe("");
 		expect(createClientModule.createClient).toHaveBeenCalledWith(
 			"https://app.framedash.dev",
-			"test-key",
+			{ kind: "api-key", apiKey: "test-key", source: "env" },
 			"",
 		);
 	});

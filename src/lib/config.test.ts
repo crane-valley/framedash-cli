@@ -4,7 +4,7 @@ vi.mock("node:fs", () => ({ readFileSync: vi.fn() }));
 vi.mock("./logger.js", () => ({ error: vi.fn() }));
 
 import { readFileSync } from "node:fs";
-import { resolveApiKey } from "./config.js";
+import { resolveApiKey, resolveCredential } from "./config.js";
 import * as loggerModule from "./logger.js";
 
 // Override process.stdin.isTTY for the duration of `fn`, then restore it.
@@ -89,5 +89,83 @@ describe("resolveApiKey", () => {
 			throw new Error("ENOENT");
 		});
 		expectExit(() => resolveApiKey({ "api-key-file": "missing.txt" }));
+	});
+});
+
+describe("resolveCredential precedence", () => {
+	const BASE_URL = "https://app.framedash.dev";
+	const STORE_JSON = JSON.stringify({
+		"https://app.framedash.dev": {
+			access_token: "fdat_stored_access",
+			refresh_token: "fdrt_stored_refresh",
+			expires_at: 9_999_999_999_999,
+			scope: "analytics:read",
+		},
+	});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		delete process.env.FRAMEDASH_API_KEY;
+	});
+
+	it("prefers the --api-key flag over everything (store never read)", () => {
+		process.env.FRAMEDASH_API_KEY = "env-key";
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		expect(resolveCredential({ "api-key": "flag-key", "api-key-file": "k.txt" }, BASE_URL)).toEqual(
+			{ kind: "api-key", apiKey: "flag-key", source: "flag" },
+		);
+		expect(readFileSync).not.toHaveBeenCalled();
+	});
+
+	it("prefers --api-key-file over env and stored tokens", () => {
+		process.env.FRAMEDASH_API_KEY = "env-key";
+		vi.mocked(readFileSync).mockReturnValue("file-key\n" as unknown as Buffer);
+		expect(resolveCredential({ "api-key-file": "k.txt" }, BASE_URL)).toEqual({
+			kind: "api-key",
+			apiKey: "file-key",
+			source: "file",
+		});
+	});
+
+	it("prefers FRAMEDASH_API_KEY env over a stored OAuth token", () => {
+		process.env.FRAMEDASH_API_KEY = "env-key";
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		expect(resolveCredential({}, BASE_URL)).toEqual({
+			kind: "api-key",
+			apiKey: "env-key",
+			source: "env",
+		});
+		expect(readFileSync).not.toHaveBeenCalled();
+	});
+
+	it("falls back to the stored OAuth token for the base URL origin", () => {
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		expect(resolveCredential({}, "https://app.framedash.dev/nested/path")).toEqual({
+			kind: "oauth",
+			origin: "https://app.framedash.dev",
+			entry: {
+				access_token: "fdat_stored_access",
+				refresh_token: "fdrt_stored_refresh",
+				expires_at: 9_999_999_999_999,
+				scope: "analytics:read",
+			},
+		});
+	});
+
+	it("ignores stored tokens for a different origin", () => {
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		expect(resolveCredential({}, "https://other.framedash.dev")).toBeUndefined();
+	});
+
+	it("treats a corrupt token store as no credential", () => {
+		vi.mocked(readFileSync).mockReturnValue("{corrupt!" as unknown as Buffer);
+		expect(resolveCredential({}, BASE_URL)).toBeUndefined();
+	});
+
+	it("returns undefined when nothing is configured", () => {
+		vi.mocked(readFileSync).mockImplementation(() => {
+			throw new Error("ENOENT");
+		});
+		expect(resolveCredential({}, BASE_URL)).toBeUndefined();
 	});
 });

@@ -127,7 +127,7 @@ describe("uploadMapCapture transport security", () => {
 			uploadMapCapture({
 				metadata,
 				imagePath: "map-1.png",
-				apiKey: "fd_admin_test",
+				credential: { kind: "api-key", apiKey: "fd_admin_test" },
 				projectId: "proj-1",
 				baseUrl: "http://evil.example",
 			}),
@@ -144,11 +144,14 @@ describe("uploadMapCapture transport security", () => {
 		await uploadMapCapture({
 			metadata,
 			imagePath: "map-1.png",
-			apiKey: "fd_admin_test",
+			credential: { kind: "api-key", apiKey: "fd_admin_test" },
 			projectId: "proj-1",
 			baseUrl: "https://app.framedash.dev/",
 		});
 		expect(fetchMock.mock.calls[0]?.[0]).toBe("https://app.framedash.dev/api/v1/maps/upload");
+		const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+		expect(headers["X-API-Key"]).toBe("fd_admin_test");
+		expect(headers.Authorization).toBeUndefined();
 	});
 
 	it("refuses to follow a redirect and sends redirect:manual + abort signal", async () => {
@@ -158,7 +161,7 @@ describe("uploadMapCapture transport security", () => {
 			uploadMapCapture({
 				metadata,
 				imagePath: "map-1.png",
-				apiKey: "fd_admin_test",
+				credential: { kind: "api-key", apiKey: "fd_admin_test" },
 				projectId: "proj-1",
 				baseUrl: "https://app.framedash.dev",
 			}),
@@ -166,5 +169,61 @@ describe("uploadMapCapture transport security", () => {
 		const opts = fetchMock.mock.calls[0]?.[1] as RequestInit;
 		expect(opts.redirect).toBe("manual");
 		expect(opts.signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it("sends a Bearer token from the shared manager for an OAuth credential", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				fakeResponse({ status: 200, body: { success: true, mapId: "m", action: "created" } }),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+		const manager = {
+			getAccessToken: vi.fn().mockResolvedValue("fdat_test_current"),
+			forceRefresh: vi.fn(),
+		};
+
+		await uploadMapCapture({
+			metadata,
+			imagePath: "map-1.png",
+			credential: { kind: "oauth", manager: manager as never },
+			projectId: "proj-1",
+			baseUrl: "https://app.framedash.dev",
+		});
+
+		const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+		expect(headers.Authorization).toBe("Bearer fdat_test_current");
+		expect(headers["X-API-Key"]).toBeUndefined();
+		expect(manager.forceRefresh).not.toHaveBeenCalled();
+	});
+
+	it("refreshes once via the shared manager and retries after a 401", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(fakeResponse({ status: 401, body: { success: false } }))
+			.mockResolvedValueOnce(
+				fakeResponse({ status: 200, body: { success: true, mapId: "m", action: "created" } }),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+		const manager = {
+			getAccessToken: vi.fn().mockResolvedValue("fdat_test_stale"),
+			forceRefresh: vi.fn().mockResolvedValue("fdat_test_refreshed"),
+		};
+
+		const result = await uploadMapCapture({
+			metadata,
+			imagePath: "map-1.png",
+			credential: { kind: "oauth", manager: manager as never },
+			projectId: "proj-1",
+			baseUrl: "https://app.framedash.dev",
+		});
+
+		expect(result.action).toBe("created");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const retryHeaders = (fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Record<
+			string,
+			string
+		>;
+		expect(retryHeaders.Authorization).toBe("Bearer fdat_test_refreshed");
 	});
 });

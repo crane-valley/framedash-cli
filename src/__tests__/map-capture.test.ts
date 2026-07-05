@@ -29,11 +29,13 @@ const TINY_PNG = Buffer.from(
 	"base64",
 );
 
+import type { UploadCredential } from "../lib/uploader.js";
+
 const defaultOpts = {
 	inputDir: undefined as string | undefined,
 	upload: false,
 	dryRun: false,
-	apiKey: undefined as string | undefined,
+	credential: undefined as UploadCredential | undefined,
 	projectId: undefined as string | undefined,
 	baseUrl: undefined as string | undefined,
 };
@@ -71,7 +73,7 @@ describe("mapCapture", () => {
 		);
 	});
 
-	it("returns failure when --upload is set but --api-key is missing", async () => {
+	it("returns failure when --upload is set but no credential is available", async () => {
 		await writeFile(join(tempDir, "map.json"), validSidecar());
 		await writeFile(join(tempDir, "test.png"), TINY_PNG);
 
@@ -83,6 +85,7 @@ describe("mapCapture", () => {
 		});
 		expect(result).toEqual({ ok: false, successCount: 0, errorCount: 0 });
 		expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("--api-key"));
+		expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("framedash login"));
 	});
 
 	it("returns failure when --upload is set but --project-id is missing", async () => {
@@ -93,7 +96,7 @@ describe("mapCapture", () => {
 			...defaultOpts,
 			inputDir: tempDir,
 			upload: true,
-			apiKey: "fd_admin_test",
+			credential: { kind: "api-key", apiKey: "fd_admin_test" },
 		});
 		expect(result).toEqual({ ok: false, successCount: 0, errorCount: 0 });
 		expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("--project-id"));

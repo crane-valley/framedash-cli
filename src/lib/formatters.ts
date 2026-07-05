@@ -13,13 +13,106 @@ export function formatOutput(data: unknown, format: OutputFormat): string {
 }
 
 function formatTable(data: unknown): string {
+	// A single object whose values contain nested arrays/objects (e.g. the
+	// dashboard's { kpis, dailyActiveUsers, topEvents }) renders one titled
+	// section per key rather than a single blob-cell row. Flat arrays-of-objects
+	// (maps list, alerts list, builds) fall through to the plain table renderer
+	// unchanged.
+	if (isSectionedPayload(data)) {
+		return formatSections(data as Record<string, unknown>);
+	}
+
 	const rows = toRows(data);
 	if (rows.length === 0) return "(no data)";
 
 	const firstRow = rows[0];
 	if (!firstRow) return "(no data)";
 
-	const keys = Object.keys(firstRow);
+	return renderRows(rows, Object.keys(firstRow));
+}
+
+/**
+ * True for an envelope-style object whose every field is a nested array/object
+ * (e.g. the dashboard's { kpis, dailyActiveUsers, topEvents } or status's
+ * { project, kpis }). Records that mix scalar fields with a nested one -- such as
+ * an alert row's scalars plus channelIds: [] -- stay on the plain one-row table
+ * path, so `alerts create/update --format table` output does not regress.
+ */
+function isSectionedPayload(data: unknown): boolean {
+	if (Array.isArray(data)) return false;
+	if (typeof data !== "object" || data === null) return false;
+	const values = Object.values(data);
+	if (values.length === 0) return false;
+	return values.every((v) => v !== null && typeof v === "object");
+}
+
+/** Render each top-level key of a sectioned payload as a titled sub-table. */
+function formatSections(obj: Record<string, unknown>): string {
+	const sections = Object.entries(obj).map(([key, value]) => {
+		let table: string;
+		if (Array.isArray(value)) {
+			table = formatArraySection(value);
+		} else if (value !== null && typeof value === "object") {
+			table = formatObjectSection(value as Record<string, unknown>);
+		} else {
+			table = cellString(value);
+		}
+		return `## ${key}\n${table}`;
+	});
+	return sections.join("\n\n");
+}
+
+/** An array-of-objects section: normal table, nested objects flattened to dot-paths. */
+function formatArraySection(arr: unknown[]): string {
+	if (arr.length === 0) return "(no data)";
+	const rows = arr.map((item) =>
+		typeof item === "object" && item !== null && !Array.isArray(item)
+			? flattenOneLevel(item as Record<string, unknown>)
+			: { value: item },
+	);
+	return renderRows(rows, unionKeys(rows));
+}
+
+/** An object section: two-column key/value rows. */
+function formatObjectSection(obj: Record<string, unknown>): string {
+	const rows = Object.entries(obj).map(([key, value]) => ({ key, value }));
+	if (rows.length === 0) return "(no data)";
+	return renderRows(rows, ["key", "value"]);
+}
+
+/** Flatten one level of nested objects into dot-path keys; deeper nesting stays JSON. */
+function flattenOneLevel(row: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(row)) {
+		if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+			for (const [subKey, subValue] of Object.entries(value as Record<string, unknown>)) {
+				out[`${key}.${subKey}`] = subValue;
+			}
+		} else {
+			out[key] = value;
+		}
+	}
+	return out;
+}
+
+/** Union of row keys in first-seen order. */
+function unionKeys(rows: Record<string, unknown>[]): string[] {
+	const seen = new Set<string>();
+	const keys: string[] = [];
+	for (const row of rows) {
+		for (const key of Object.keys(row)) {
+			if (!seen.has(key)) {
+				seen.add(key);
+				keys.push(key);
+			}
+		}
+	}
+	return keys;
+}
+
+/** Render aligned columns for the given rows/keys using cellString for each cell. */
+function renderRows(rows: Record<string, unknown>[], keys: string[]): string {
+	if (rows.length === 0 || keys.length === 0) return "(no data)";
 	const widths = keys.map((k) => Math.max(k.length, ...rows.map((r) => cellString(r[k]).length)));
 
 	const header = keys.map((k, i) => k.padEnd(widths[i] ?? k.length)).join("  ");

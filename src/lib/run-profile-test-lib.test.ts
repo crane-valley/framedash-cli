@@ -8,7 +8,9 @@ import {
 	ENV_GIT_COMMIT,
 	ENV_TEST_SCENARIO,
 	hasIngestedBuild,
+	planTreeKill,
 	resolveProfileIdentity,
+	validateSeconds,
 	waitForIngest,
 } from "./run-profile-test-lib.js";
 
@@ -139,6 +141,82 @@ describe("hasIngestedBuild", () => {
 		expect(hasIngestedBuild(builds, "cand", 3)).toBe(false);
 		// Grew past the prior count -> fresh events landed.
 		expect(hasIngestedBuild([{ build_id: "cand", event_count: 4 }], "cand", 3)).toBe(true);
+	});
+});
+
+describe("validateSeconds", () => {
+	it("falls back when the value is unset or a boolean", () => {
+		expect(validateSeconds(undefined, 180)).toEqual({ value: 180 });
+		expect(validateSeconds(true, 180)).toEqual({ value: 180 });
+	});
+
+	it("parses a positive numeric string", () => {
+		expect(validateSeconds("42", 180)).toEqual({ value: 42 });
+	});
+
+	it("rejects zero and negatives without allowZero", () => {
+		expect(validateSeconds("0", 180)).toEqual({
+			error: "must be a positive number of seconds",
+		});
+		expect(validateSeconds("-5", 180)).toEqual({
+			error: "must be a positive number of seconds",
+		});
+		expect(validateSeconds("abc", 180)).toEqual({
+			error: "must be a positive number of seconds",
+		});
+	});
+
+	it("allows zero (disable) but still rejects negatives with allowZero", () => {
+		expect(validateSeconds("0", 1800, { allowZero: true })).toEqual({ value: 0 });
+		expect(validateSeconds("30", 1800, { allowZero: true })).toEqual({ value: 30 });
+		expect(validateSeconds("-1", 1800, { allowZero: true })).toEqual({
+			error: "must be a non-negative number of seconds (0 disables the bound)",
+		});
+	});
+
+	it("rejects a blank/whitespace value instead of coercing it to 0", () => {
+		// Number("") and Number(" ") are 0; blank must not disable the bound.
+		expect(validateSeconds("", 1800, { allowZero: true })).toEqual({
+			error: "must be a non-negative number of seconds (0 disables the bound)",
+		});
+		expect(validateSeconds("   ", 1800, { allowZero: true })).toEqual({
+			error: "must be a non-negative number of seconds (0 disables the bound)",
+		});
+		expect(validateSeconds("", 180)).toEqual({ error: "must be a positive number of seconds" });
+	});
+
+	it("rejects a value above the max (setTimeout overflow guard)", () => {
+		expect(validateSeconds("100", 1800, { allowZero: true, max: 50 })).toEqual({
+			error: "must be at most 50 seconds",
+		});
+		expect(validateSeconds("50", 1800, { allowZero: true, max: 50 })).toEqual({ value: 50 });
+	});
+});
+
+describe("planTreeKill", () => {
+	it("uses taskkill /T /F on win32", () => {
+		expect(planTreeKill("win32", 4321)).toEqual({
+			platform: "win32",
+			command: "taskkill",
+			args: ["/pid", "4321", "/t", "/f"],
+		});
+	});
+
+	it("signals the negative pid (process group) on POSIX", () => {
+		expect(planTreeKill("linux", 4321)).toEqual({ platform: "posix", groupPid: -4321 });
+		expect(planTreeKill("darwin", 99)).toEqual({ platform: "posix", groupPid: -99 });
+	});
+
+	it("refuses to act on a missing / non-positive / non-integer pid", () => {
+		// kill(0)/kill(-1) on POSIX would signal our own group or every process, so an
+		// unsafe pid must yield a noop plan on every platform.
+		for (const platform of ["win32", "linux", "darwin"] as const) {
+			expect(planTreeKill(platform, undefined)).toEqual({ platform: "noop" });
+			expect(planTreeKill(platform, 0)).toEqual({ platform: "noop" });
+			expect(planTreeKill(platform, -5)).toEqual({ platform: "noop" });
+			expect(planTreeKill(platform, 1.5)).toEqual({ platform: "noop" });
+			expect(planTreeKill(platform, Number.NaN)).toEqual({ platform: "noop" });
+		}
 	});
 });
 
