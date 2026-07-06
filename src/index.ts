@@ -13,6 +13,7 @@ Commands:
                  the FRAMEDASH_API_KEY env var instead)
   logout         Revoke and remove a stored browser login
   auth           Verify credentials, show their source, and list projects
+  projects       List projects (discover the --project-id for other commands)
   status         Show project status and key metrics
   dashboard      Show dashboard metrics
   retention      Show player retention cohorts
@@ -47,6 +48,7 @@ const COMMANDS: Record<string, () => Promise<(args: string[]) => Promise<void>>>
 	login: () => import("./commands/login.js").then((m) => m.login),
 	logout: () => import("./commands/logout.js").then((m) => m.logout),
 	auth: () => import("./commands/auth.js").then((m) => m.auth),
+	projects: () => import("./commands/projects.js").then((m) => m.projects),
 	status: () => import("./commands/status.js").then((m) => m.status),
 	dashboard: () => import("./commands/dashboard.js").then((m) => m.dashboard),
 	retention: () => import("./commands/retention.js").then((m) => m.retention),

@@ -6,6 +6,15 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-06
+
+### Added
+
+- `framedash projects list`: list the projects your credentials can read
+  (id, name, createdAt) via `GET /api/v1/projects`, requiring no
+  `--project-id`. Gives onboarding a first-class way to discover a project id
+  instead of inferring it from `framedash auth` output.
+
 ## [0.1.3] - 2026-07-05
 
 ### Added

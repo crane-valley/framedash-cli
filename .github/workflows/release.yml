@@ -56,12 +56,15 @@ jobs:
         with:
           # OIDC trusted publishing requires Node >= 22.14 and npm >= 11.5.1.
           node-version: "22.14.0"
-      - name: Use npm with OIDC support (11.x line, >= 11.5.1)
-        run: npm install -g npm@11
+      - name: Use npm with OIDC support (pinned 11.x line, >= 11.5.1)
+        run: npm install -g npm@11.18.0
       # npm install (not ci): the mirror ships no package-lock.json. For cli /
       # mcp-server this resolves @framedash/api-client from the registry (the
       # mirror manifest pins it to an exact version, not the workspace: protocol).
-      - run: npm install
+      # Do not run registry package lifecycle scripts in the same job that has
+      # id-token: write for npm Trusted Publishing. The mirror packages build
+      # from TypeScript only, so dependency postinstall hooks are not required.
+      - run: npm install --ignore-scripts
       # Build BEFORE npm publish. npm normalizes package.json (validating that
       # each bin's target file exists) before any publish lifecycle script runs;
       # if dist is absent at that point it silently strips the package bin. So the

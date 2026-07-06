@@ -13,6 +13,12 @@ export function formatOutput(data: unknown, format: OutputFormat): string {
 }
 
 function formatTable(data: unknown): string {
+	// The /api/v1/query endpoint returns { rows: [...], rowCount: N }. Tabulate
+	// the rows themselves rather than dumping the whole array into one JSON cell.
+	if (isQueryResult(data)) {
+		return formatTable(data.rows);
+	}
+
 	// A single object whose values contain nested arrays/objects (e.g. the
 	// dashboard's { kpis, dailyActiveUsers, topEvents }) renders one titled
 	// section per key rather than a single blob-cell row. Flat arrays-of-objects
@@ -29,6 +35,17 @@ function formatTable(data: unknown): string {
 	if (!firstRow) return "(no data)";
 
 	return renderRows(rows, Object.keys(firstRow));
+}
+
+/**
+ * True for the /api/v1/query result envelope { rows: [...], rowCount: number }.
+ * Only that endpoint returns this shape, so table format can safely unwrap it to
+ * tabulate the individual records instead of rendering one giant JSON cell.
+ */
+function isQueryResult(data: unknown): data is { rows: unknown[]; rowCount: number } {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+	const obj = data as Record<string, unknown>;
+	return Array.isArray(obj.rows) && typeof obj.rowCount === "number";
 }
 
 /**

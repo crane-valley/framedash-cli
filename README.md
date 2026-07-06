@@ -9,6 +9,7 @@ Framedash CLI tool for CI/CD pipelines, analytics queries, and coding agent inte
 | `framedash login` | Sign in via the browser (interactive OAuth; not for CI) |
 | `framedash logout` | Revoke and remove a stored browser login |
 | `framedash auth` | Verify credentials, show their source, and list projects |
+| `framedash projects` | List accessible projects (discover your project id) |
 | `framedash query` | Run SQL analytics queries against ClickHouse |
 | `framedash dashboard` | Fetch dashboard KPI summary |
 | `framedash retention` | Fetch retention cohort data |
