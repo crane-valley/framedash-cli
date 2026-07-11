@@ -10,6 +10,7 @@ import {
 	evaluateRegression,
 	formatMetricDiff,
 	isRegressionMetric,
+	loadTimeMapConflict,
 	type RegressionMetric,
 } from "../lib/perf-diff-eval.js";
 import { runCommand } from "../lib/run-command.js";
@@ -95,10 +96,20 @@ function resolveGateOptions(values: Values, candidateBuildId: string): GateOptio
 	if (values.metric !== undefined) {
 		const raw = (values.metric as string).trim();
 		if (!isRegressionMetric(raw)) {
-			error(`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time`);
+			error(
+				`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms`,
+			);
 			process.exit(1);
 		}
 		metric = raw;
+	}
+
+	// map_load rows have an empty map_id; a map-filtered load_time_ms gate returns
+	// no rows and would wrongly trip the fail-closed check.
+	const mapConflict = loadTimeMapConflict(metric, values.map as string | undefined);
+	if (mapConflict) {
+		error(mapConflict);
+		process.exit(1);
 	}
 
 	let thresholdPct = 0;
@@ -622,11 +633,14 @@ id is not satisfied by old data):
 
 Regression gate (runs only when --baseline is set):
   --baseline <id>        Known-good build_id to compare the candidate against
-  --metric <name>        Gate on one metric: frame_time, memory, gpu_time (default: all)
+  --metric <name>        Gate on one metric: frame_time, memory, gpu_time,
+                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms
+                         (default: all)
   --threshold <pct>      Tolerate a regression up to this percent (default: 0)
   --fail-on-regression   Exit 1 on a regression beyond the threshold (needs --baseline)
   --days <n>             Comparison window in days: 7, 14, 30, 90 (default: 30)
-  --map <id>             Restrict the comparison to one map
+  --map <id>             Restrict the comparison to one map. NOT valid with
+                         --metric load_time_ms (map_load rows carry an empty map_id).
   --platform <name>      Restrict the comparison to one platform
 
 Global:

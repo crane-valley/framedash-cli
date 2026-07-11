@@ -6,6 +6,7 @@ import {
 	evaluateRegression,
 	formatMetricDiff,
 	isRegressionMetric,
+	loadTimeMapConflict,
 	type RegressionMetric,
 } from "../lib/perf-diff-eval.js";
 import { runCommand } from "../lib/run-command.js";
@@ -46,10 +47,20 @@ export async function perfDiff(args: string[]): Promise<void> {
 			if (values.metric !== undefined) {
 				const raw = (values.metric as string).trim();
 				if (!isRegressionMetric(raw)) {
-					error(`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time`);
+					error(
+						`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms`,
+					);
 					process.exit(1);
 				}
 				metric = raw;
+			}
+
+			// map_load rows have an empty map_id; a map-filtered load_time_ms compare
+			// returns no rows and would wrongly trip the fail-closed gate.
+			const mapConflict = loadTimeMapConflict(metric, values.map as string | undefined);
+			if (mapConflict) {
+				error(mapConflict);
+				process.exit(1);
 			}
 
 			let thresholdPct = 0;
@@ -122,8 +133,9 @@ export async function perfDiff(args: string[]): Promise<void> {
 
 const HELP = `Usage: framedash perf-diff --baseline <id> --candidate <id> [options]
 
-Compare two builds' performance (P50/P95 frame time, memory, GPU time) and,
-with --fail-on-regression, exit non-zero when the candidate regressed -- so a CI
+Compare two builds' performance (P50/P95 frame time, memory, GPU time, disk io.*
+read metrics, and map/level load time) and, with --fail-on-regression, exit
+non-zero when the candidate regressed -- so a CI
 job can gate a merge on a build-over-build performance regression. Build IDs are
 whatever your SDK reported as build_id (set it from CI, e.g. the git SHA); list
 them with 'framedash builds'.
@@ -133,14 +145,19 @@ Required:
   --candidate <id>       New build_id under test
 
 Options:
-  --metric <name>        Gate on one metric only: frame_time, memory, gpu_time
-                         (default: all). Lower is better; a positive % is a regression.
+  --metric <name>        Gate on one metric only: frame_time, memory, gpu_time,
+                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms
+                         (default: all). Lower is better; a positive % is a
+                         regression. io.* need disk-IO tracking enabled in the SDK;
+                         load_time_ms needs SDK map-load timing (BeginMapLoad/EndMapLoad).
   --threshold <pct>      Tolerate a regression up to this percent (default: 0 =
                          any worsening fails). e.g. --threshold 5 ignores <=5% noise.
   --fail-on-regression   Exit 1 if a regression beyond the threshold is found
                          (otherwise perf-diff only reports and exits 0)
   --days <n>             Time period in days: 7, 14, 30, 90 (default: 30)
-  --map <id>             Restrict the comparison to one map
+  --map <id>             Restrict the comparison to one map. NOT valid with
+                         --metric load_time_ms (map_load rows carry an empty
+                         map_id; use the dashboard per-map breakdown instead).
   --platform <name>      Restrict the comparison to one platform
   --api-key <key>        API key (or FRAMEDASH_API_KEY env)
   --project-id <uuid>    Project ID (or FRAMEDASH_PROJECT_ID env)

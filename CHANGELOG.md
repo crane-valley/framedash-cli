@@ -6,6 +6,28 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-11
+
+### Added
+
+- `framedash perf-diff` / `framedash run-profile-test`: four new comparable
+  metrics for `--metric` -- disk I/O (`io.read_bytes`, `io.read_time_ms`,
+  `io.read_ops`, from the SDK perf-heartbeat disk metrics) and map/level load
+  time (`load_time_ms`, from the SDK `map_load` event). All lower-is-better,
+  P95 tail, gated build-over-build like the core three.
+- Zero-baseline regression detection: a metric whose baseline is 0 (or absent
+  baseline samples with candidate samples present) and whose candidate moved
+  away from zero now counts as a regression offender even though a percent
+  diff is undefined; the diff output prints
+  `baseline 0 -> N (regression from zero)`.
+
+### Changed
+
+- `--metric load_time_ms` combined with `--map` is rejected with an explicit
+  validation error: `map_load` events deliberately carry an empty `map_id`
+  (the per-map load-time breakdown lives in the dashboard). Documented on
+  `--map` in `--help` for both commands.
+
 ## [0.1.4] - 2026-07-06
 
 ### Added
