@@ -6,6 +6,37 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-17
+
+### Added
+
+- Package `description` and `keywords` for discoverability on npm.
+
+### Changed
+
+- The "no credentials found" error now points to the project API Keys page
+  (https://app.framedash.dev) and the docs URL so an AI agent can self-serve
+  setup.
+- `framedash login`: surface an OAuth loopback host mismatch clearly. If the
+  browser callback lands on a host other than the one the `redirect_uri` was
+  registered with (e.g. an authorize URL rewritten from `127.0.0.1` to
+  `localhost` by a proxy or by hand), the receiver now warns that the URL was
+  altered and that token exchange will fail. When the exchange itself fails with
+  `invalid_grant` on a `redirect_uri` mismatch, the error is followed by an
+  actionable hint to re-run and open the printed authorization URL exactly as-is.
+- `framedash run-profile-test`: a `429` during the pre-run event-count snapshot
+  no longer aborts before the engine launches. The snapshot now honors
+  `Retry-After` and retries with a capped cumulative wait (up to 120s; a longer
+  `Retry-After` fails fast), and on exhaustion exits with a rate-limit-specific
+  message that surfaces the server's detail (the hourly rate limit that was hit).
+  A 429 with no `Retry-After` (the limiter failing closed on a backend outage,
+  `retryable: false`) is not retried and is reported as a transient outage rather
+  than a rate limit. The snapshot is still fail-closed (never skipped).
+- `framedash alerts delete`: help and success output now describe the operation
+  as a deactivation (soft-delete). A deactivated rule stops firing and no longer
+  counts against quota but is retained and can be reactivated with
+  `framedash alerts update <id> --is-active true`. The command name is unchanged.
+
 ## [0.1.5] - 2026-07-11
 
 ### Added

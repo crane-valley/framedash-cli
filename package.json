@@ -1,6 +1,23 @@
 {
 	"name": "@framedash/cli",
-	"version": "0.1.5",
+	"version": "0.1.6",
+	"description": "Framedash CLI: game telemetry queries, CI perf-regression gating (perf-diff, run-profile-test), and coding-agent integration for Unity, Unreal Engine 5, and Godot",
+	"keywords": [
+		"game-analytics",
+		"game-telemetry",
+		"performance",
+		"performance-regression",
+		"ci",
+		"perf-diff",
+		"profiling",
+		"heatmap",
+		"unity",
+		"unreal-engine",
+		"ue5",
+		"godot",
+		"clickhouse",
+		"cli"
+	],
 	"license": "MIT",
 	"type": "module",
 	"files": [
@@ -31,14 +48,14 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@framedash/api-client": "0.1.3",
+		"@framedash/api-client": "0.1.4",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.0",
-		"@vitest/coverage-v8": "^3.2.0",
+		"@vitest/coverage-v8": "^3.2.6",
 		"typescript": "^5.7.0",
-		"vitest": "^3.2.0"
+		"vitest": "^3.2.6"
 	},
 	"repository": {
 		"type": "git",

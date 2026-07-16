@@ -48,7 +48,7 @@ export async function perfDiff(args: string[]): Promise<void> {
 				const raw = (values.metric as string).trim();
 				if (!isRegressionMetric(raw)) {
 					error(
-						`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms`,
+						`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms, mem.vram`,
 					);
 					process.exit(1);
 				}
@@ -134,7 +134,7 @@ export async function perfDiff(args: string[]): Promise<void> {
 const HELP = `Usage: framedash perf-diff --baseline <id> --candidate <id> [options]
 
 Compare two builds' performance (P50/P95 frame time, memory, GPU time, disk io.*
-read metrics, and map/level load time) and, with --fail-on-regression, exit
+read metrics, map/level load time, and VRAM) and, with --fail-on-regression, exit
 non-zero when the candidate regressed -- so a CI
 job can gate a merge on a build-over-build performance regression. Build IDs are
 whatever your SDK reported as build_id (set it from CI, e.g. the git SHA); list
@@ -146,10 +146,11 @@ Required:
 
 Options:
   --metric <name>        Gate on one metric only: frame_time, memory, gpu_time,
-                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms
-                         (default: all). Lower is better; a positive % is a
+                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms,
+                         mem.vram (default: all). Lower is better; a positive % is a
                          regression. io.* need disk-IO tracking enabled in the SDK;
-                         load_time_ms needs SDK map-load timing (BeginMapLoad/EndMapLoad).
+                         load_time_ms needs SDK map-load timing (BeginMapLoad/EndMapLoad);
+                         mem.vram needs SDK VRAM sampling (map-filterable).
   --threshold <pct>      Tolerate a regression up to this percent (default: 0 =
                          any worsening fails). e.g. --threshold 5 ignores <=5% noise.
   --fail-on-regression   Exit 1 if a regression beyond the threshold is found

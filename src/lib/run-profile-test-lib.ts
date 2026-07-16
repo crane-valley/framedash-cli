@@ -5,6 +5,85 @@
  * spawn, and the perf-diff gate around these.
  */
 
+import { ApiError } from "@framedash/api-client";
+
+/**
+ * True when an ApiError carries a Retry-After we can actually honor: a finite,
+ * non-negative number of seconds. The API omits retry_after (undefined) when its
+ * limiter fails closed on a backend outage, and a malformed body could yield
+ * null / NaN / Infinity / negative -- all of which mean "no usable window", so a
+ * 429 with an invalid delay is treated the same as the fail-closed case. Shared
+ * between withRateLimitRetry (whether to retry) and the command's error-reporting
+ * (real rate-limit window vs. transient outage) so the two cannot drift.
+ */
+export function isValidRetryAfter(retryAfter: number | undefined): retryAfter is number {
+	return retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter >= 0;
+}
+
+/** Injected knobs for withRateLimitRetry (all bounds have sane defaults). */
+export interface RateLimitRetryOptions {
+	/** Sleep helper (injected so tests need no real timers). */
+	sleep: (ms: number) => Promise<void>;
+	/** Total tries including the first attempt (default 5). */
+	maxAttempts?: number;
+	/** Cap on the CUMULATIVE Retry-After wait, in ms (default 120_000). */
+	totalWaitCapMs?: number;
+	/** Per-retry hook (progress logging); not called on the final failure. */
+	onRetry?: (info: { attempt: number; waitMs: number; maxAttempts: number }) => void;
+}
+
+/**
+ * Run `fetchFn`, retrying ONLY a genuinely retryable HTTP 429 while honoring the
+ * ApiError's Retry-After. The API omits retry_after (and sets retryable=false)
+ * when its limiter fails closed on a Redis outage; that 429 is NOT retried here
+ * -- it re-throws on the first attempt so the caller surfaces it immediately
+ * rather than spinning on a guessed backoff. The cumulative wait is capped: a
+ * single Retry-After (or the running total) beyond `totalWaitCapMs` re-throws
+ * the 429 rather than blocking a CI job on a long per-account-quota reset. Any
+ * non-429 error propagates on the first attempt, and the final 429 (budget/cap
+ * exhausted) is re-thrown so the caller can surface a rate-limit-specific
+ * message. Kept pure (no logging, no process.exit) so the logic is unit-testable.
+ */
+export async function withRateLimitRetry<T>(
+	fetchFn: () => Promise<T>,
+	options: RateLimitRetryOptions,
+): Promise<T> {
+	const maxAttempts = options.maxAttempts ?? 5;
+	const totalWaitCapMs = options.totalWaitCapMs ?? 120_000;
+	let totalWaitMs = 0;
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await fetchFn();
+		} catch (err) {
+			// A 429 without a usable Retry-After is the fail-closed limiter
+			// (retryable=false, or a malformed NaN/Infinity/negative delay): re-throw
+			// it (and any non-429 / budget-exhausted error) unretried. Validating the
+			// delay is finite and non-negative here keeps a bad value from becoming a
+			// NaN/negative retryAfterMs that slips past the cap checks below and hands
+			// setTimeout an invalid duration.
+			if (
+				!(err instanceof ApiError) ||
+				err.status !== 429 ||
+				!isValidRetryAfter(err.retryAfter) ||
+				attempt >= maxAttempts
+			) {
+				throw err;
+			}
+			const retryAfterMs = err.retryAfter * 1000;
+			// Fail fast rather than block: a wait (this Retry-After plus what we have
+			// already slept) past the cap is not worth stalling on. totalWaitMs starts
+			// at 0 and only accrues validated non-negative delays, so this single check
+			// also covers a first Retry-After that alone exceeds the cap.
+			if (totalWaitMs + retryAfterMs > totalWaitCapMs) {
+				throw err;
+			}
+			totalWaitMs += retryAfterMs;
+			options.onRetry?.({ attempt, waitMs: retryAfterMs, maxAttempts });
+			await options.sleep(retryAfterMs);
+		}
+	}
+}
+
 /**
  * The FRAMEDASH_* environment contract the SDK's
  * BeginAutomatedSessionFromEnvironment() reads to stamp the automated session.

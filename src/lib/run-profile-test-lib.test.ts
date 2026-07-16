@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { ApiError } from "@framedash/api-client";
+import { describe, expect, it, vi } from "vitest";
 import {
 	type BuildListEntry,
 	buildEventCount,
@@ -8,11 +9,135 @@ import {
 	ENV_GIT_COMMIT,
 	ENV_TEST_SCENARIO,
 	hasIngestedBuild,
+	isValidRetryAfter,
 	planTreeKill,
 	resolveProfileIdentity,
 	validateSeconds,
 	waitForIngest,
+	withRateLimitRetry,
 } from "./run-profile-test-lib.js";
+
+describe("isValidRetryAfter", () => {
+	it("accepts a finite non-negative number of seconds", () => {
+		expect(isValidRetryAfter(0)).toBe(true);
+		expect(isValidRetryAfter(30)).toBe(true);
+	});
+
+	it("rejects undefined, negative, and non-finite values", () => {
+		expect(isValidRetryAfter(undefined)).toBe(false);
+		expect(isValidRetryAfter(-1)).toBe(false);
+		expect(isValidRetryAfter(Number.NaN)).toBe(false);
+		expect(isValidRetryAfter(Number.POSITIVE_INFINITY)).toBe(false);
+	});
+});
+
+function rateLimited(retryAfterSeconds?: number): ApiError {
+	return new ApiError(
+		"rate limited",
+		429,
+		new Headers(),
+		retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : undefined,
+	);
+}
+
+describe("withRateLimitRetry", () => {
+	it("retries a 429 honoring Retry-After, then returns the value", async () => {
+		const waits: number[] = [];
+		const sleep = vi.fn((ms: number) => {
+			waits.push(ms);
+			return Promise.resolve();
+		});
+		let calls = 0;
+		const fetchFn = vi.fn(async () => {
+			calls++;
+			if (calls < 3) throw rateLimited(2);
+			return "ok";
+		});
+		const onRetry = vi.fn();
+
+		const result = await withRateLimitRetry(fetchFn, { sleep, onRetry });
+
+		expect(result).toBe("ok");
+		expect(fetchFn).toHaveBeenCalledTimes(3);
+		expect(waits).toEqual([2000, 2000]);
+		expect(onRetry).toHaveBeenCalledTimes(2);
+	});
+
+	it("re-throws immediately when a single Retry-After exceeds the cap", async () => {
+		const sleep = vi.fn(() => Promise.resolve());
+		const fetchFn = vi.fn(async () => {
+			throw rateLimited(200);
+		});
+
+		await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toBeInstanceOf(ApiError);
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+		expect(sleep).not.toHaveBeenCalled();
+	});
+
+	it("caps the CUMULATIVE wait, not just a single Retry-After", async () => {
+		const sleep = vi.fn(() => Promise.resolve());
+		const fetchFn = vi.fn(async () => {
+			throw rateLimited(80);
+		});
+
+		// 80s is under the 120s cap, but 80s + 80s = 160s is not: retry once, then bail.
+		await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toBeInstanceOf(ApiError);
+		expect(sleep).toHaveBeenCalledTimes(1);
+		expect(fetchFn).toHaveBeenCalledTimes(2);
+	});
+
+	it("re-throws the 429 after exhausting the attempt budget", async () => {
+		const sleep = vi.fn(() => Promise.resolve());
+		const fetchFn = vi.fn(async () => {
+			throw rateLimited(1);
+		});
+
+		await expect(withRateLimitRetry(fetchFn, { sleep, maxAttempts: 3 })).rejects.toBeInstanceOf(
+			ApiError,
+		);
+		expect(fetchFn).toHaveBeenCalledTimes(3);
+		// Slept before the 2nd and 3rd tries, not after the final failure.
+		expect(sleep).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not retry a 429 that carries no Retry-After (fail-closed limiter)", async () => {
+		const sleep = vi.fn(() => Promise.resolve());
+		// retryable=false / no retry_after: the limiter failed closed, so surface it now.
+		const fetchFn = vi.fn(async () => {
+			throw rateLimited();
+		});
+
+		await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toBeInstanceOf(ApiError);
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+		expect(sleep).not.toHaveBeenCalled();
+	});
+
+	it("does not retry a 429 with a malformed Retry-After (NaN/Infinity/negative)", async () => {
+		for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -5]) {
+			const sleep = vi.fn(() => Promise.resolve());
+			// A bad delay must not become a NaN/negative wait that slips past the cap
+			// checks and hands setTimeout an invalid duration -- treat it as non-retryable.
+			const fetchFn = vi.fn(async () => {
+				throw rateLimited(bad);
+			});
+
+			await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toBeInstanceOf(ApiError);
+			expect(fetchFn).toHaveBeenCalledTimes(1);
+			expect(sleep).not.toHaveBeenCalled();
+		}
+	});
+
+	it("propagates a non-429 error on the first attempt without sleeping", async () => {
+		const sleep = vi.fn(() => Promise.resolve());
+		const fetchFn = vi.fn(async () => {
+			throw new ApiError("boom", 500, new Headers());
+		});
+
+		await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toThrow("boom");
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+		expect(sleep).not.toHaveBeenCalled();
+	});
+});
 
 describe("resolveProfileIdentity", () => {
 	it("prefers explicit flags over git fallbacks", () => {

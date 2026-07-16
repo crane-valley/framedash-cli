@@ -1,4 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { warn } from "../logger.js";
+
+// The loopback redirect_uri is registered with THIS host. Per RFC 6749
+// section 4.1.3 the AS mints the code against whatever redirect host the
+// browser actually hit and requires an exact match at token exchange, so a
+// proxy or a hand-edited authorize URL that swaps 127.0.0.1 for localhost (or
+// vice versa) binds the code to the other host and the exchange then fails
+// invalid_grant. Keep this fixed and warn when the callback lands elsewhere.
+const REDIRECT_HOST = "127.0.0.1";
 
 // RFC 8252 section 7.3 loopback redirect receiver for `framedash login`.
 //
@@ -53,6 +62,35 @@ export class OAuthCallbackError extends Error {
  */
 function sanitizeForTerminal(value: string): string {
 	return value.replace(/[^a-zA-Z0-9 _.,:;/'()-]/g, "").slice(0, 200);
+}
+
+/**
+ * Warning text when a /callback request lands on a host other than the one the
+ * redirect_uri was registered with (the authorization URL was altered before it
+ * opened), or null when the host matches. Pure so the comparison is unit-testable
+ * without a live server; the handler decides whether to emit it.
+ */
+export function callbackHostMismatchWarning(
+	hostHeader: string | undefined,
+	expectedHost: string = REDIRECT_HOST,
+): string | null {
+	if (!hostHeader) return null;
+	let hostname: string;
+	try {
+		// Wrap in a scheme so URL parses a bare "host:port" authority.
+		hostname = new URL(`http://${hostHeader}`).hostname;
+	} catch {
+		return null;
+	}
+	if (hostname === expectedHost) return null;
+	return (
+		`The sign-in callback arrived on host '${hostname}', but the authorization URL ` +
+		`was issued for '${expectedHost}'. The authorization URL appears to have been ` +
+		`altered (e.g. '${expectedHost}' rewritten to '${hostname}'), so token exchange ` +
+		`will fail with a redirect_uri mismatch. Re-run 'framedash login' and open the ` +
+		`printed URL EXACTLY as-is -- do not substitute localhost for ${expectedHost} or ` +
+		`vice versa.`
+	);
 }
 
 export type LoopbackServer = {
@@ -141,6 +179,12 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 			return;
 		}
 
+		// A valid code arrived on an unexpected host: the exchange will fail exact
+		// redirect_uri match, so warn now with the fix rather than let it surface
+		// only as an opaque invalid_grant later.
+		const mismatch = callbackHostMismatchWarning(req.headers.host);
+		if (mismatch) warn(mismatch);
+
 		res.writeHead(200, HTML_HEADERS);
 		res.end(SUCCESS_PAGE);
 		settle({ code });
@@ -153,7 +197,7 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 	return new Promise<LoopbackServer>((resolve, reject) => {
 		server.once("error", reject);
 		// STRICT loopback bind: 127.0.0.1 only (never 0.0.0.0/::), ephemeral port.
-		server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+		server.listen({ host: REDIRECT_HOST, port: 0, exclusive: true }, () => {
 			const address = server.address();
 			if (address === null || typeof address === "string") {
 				reject(new Error("Loopback server failed to report a bound port"));
@@ -163,7 +207,7 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 			const port = address.port;
 			resolve({
 				port,
-				redirectUri: `http://127.0.0.1:${port}/callback`,
+				redirectUri: `http://${REDIRECT_HOST}:${port}/callback`,
 				waitForCallback: (timeoutMs: number) => {
 					return new Promise<{ code: string }>((resolveWait, rejectWait) => {
 						const timer = setTimeout(() => {

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { OAuthCallbackError, startLoopbackServer } from "./loopback-server.js";
+import { get as httpGet } from "node:http";
+import { describe, expect, it, vi } from "vitest";
+import {
+	callbackHostMismatchWarning,
+	OAuthCallbackError,
+	startLoopbackServer,
+} from "./loopback-server.js";
 
 // These tests hit the real ephemeral server over 127.0.0.1 (loopback only,
 // no external network) because the bind address IS the security property
@@ -144,5 +149,54 @@ describe("startLoopbackServer", () => {
 		await withServer(async (server) => {
 			await expect(server.waitForCallback(50)).rejects.toThrow(/Timed out/);
 		});
+	});
+
+	it("warns to stderr when a valid code arrives on an altered host", async () => {
+		await withServer(async (server) => {
+			const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+			const wait = server.waitForCallback(5000);
+			// fetch cannot set the forbidden Host header; use node:http to spoof a
+			// callback that came in on 'localhost' (an altered authorize URL) while
+			// still connecting to the real 127.0.0.1 loopback port.
+			await new Promise<void>((resolve, reject) => {
+				const req = httpGet(
+					{
+						host: "127.0.0.1",
+						port: server.port,
+						path: `/callback?code=fdac_real&state=${encodeURIComponent(STATE)}`,
+						headers: { Host: `localhost:${server.port}` },
+					},
+					(res) => {
+						res.resume();
+						res.on("end", () => resolve());
+					},
+				);
+				req.on("error", reject);
+			});
+			await expect(wait).resolves.toEqual({ code: "fdac_real" });
+			const written = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+			expect(written).toContain("altered");
+			expect(written).toContain("EXACTLY as-is");
+			stderrSpy.mockRestore();
+		});
+	});
+});
+
+describe("callbackHostMismatchWarning", () => {
+	it("returns null when the callback host matches the redirect host", () => {
+		expect(callbackHostMismatchWarning("127.0.0.1:49152")).toBeNull();
+	});
+
+	it("warns when localhost was substituted for 127.0.0.1", () => {
+		const msg = callbackHostMismatchWarning("localhost:49152");
+		expect(msg).not.toBeNull();
+		expect(msg).toContain("altered");
+		expect(msg).toContain("127.0.0.1");
+		expect(msg).toContain("EXACTLY as-is");
+	});
+
+	it("returns null for a missing or empty host header", () => {
+		expect(callbackHostMismatchWarning(undefined)).toBeNull();
+		expect(callbackHostMismatchWarning("")).toBeNull();
 	});
 });

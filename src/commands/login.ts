@@ -11,6 +11,7 @@ import {
 import {
 	CLI_OAUTH_CLIENT_ID,
 	exchangeAuthorizationCode,
+	OAuthTokenRequestError,
 	revokeToken,
 	toStoredEntry,
 } from "../lib/oauth/token-endpoint.js";
@@ -122,11 +123,40 @@ export async function login(args: string[]): Promise<void> {
 		success("Waiting for the browser sign-in to complete (5 minute timeout)...");
 
 		const { code } = await server.waitForCallback(CALLBACK_TIMEOUT_MS);
-		const tokens = await exchangeAuthorizationCode(baseUrl, {
-			code,
-			codeVerifier,
-			redirectUri: server.redirectUri,
-		});
+		let tokens: Awaited<ReturnType<typeof exchangeAuthorizationCode>>;
+		try {
+			tokens = await exchangeAuthorizationCode(baseUrl, {
+				code,
+				codeVerifier,
+				redirectUri: server.redirectUri,
+			});
+		} catch (err) {
+			// A redirect_uri-mismatch invalid_grant almost always means the authorize
+			// URL was altered before it opened (a proxy or the user swapping 127.0.0.1
+			// for localhost), so the code was minted against a different host than the
+			// exchange presents. Print the raw error FIRST, then the concrete fix, so
+			// the ordering is not left to the top-level catch in index.ts.
+			if (
+				err instanceof OAuthTokenRequestError &&
+				err.code === "invalid_grant" &&
+				/redirect_uri/i.test(err.message)
+			) {
+				error(err.message);
+				error(
+					"This is a redirect_uri mismatch. Re-run 'framedash login' and open the printed " +
+						"authorization URL EXACTLY as-is -- do not substitute localhost for 127.0.0.1 " +
+						"(or vice versa) or route it through a proxy.",
+				);
+				// Signal failure via the exit code and unwind through `finally` so the
+				// loopback server is closed before the process exits -- a direct
+				// process.exit() here would skip that cleanup, and mocking it in tests
+				// would diverge from production (the mock throws, running finally; the
+				// real exit does not).
+				process.exitCode = 1;
+				return;
+			}
+			throw err;
+		}
 		// Last-writer-wins: of two racing logins for the same origin, the later
 		// save is the one that sticks (see token-store.ts concurrency model).
 		const entry = toStoredEntry(tokens);

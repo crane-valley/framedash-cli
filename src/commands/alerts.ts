@@ -11,7 +11,8 @@ Subcommands:
   list                   List alert rules
   create                 Create a new alert rule
   update <id>            Update an alert rule
-  delete <id>            Delete an alert rule
+  delete <id>            Deactivate an alert rule (soft-delete; reactivate with
+                         'alerts update <id> --is-active true')
 
 Run 'framedash alerts <subcommand> --help' for more info.`;
 
@@ -22,14 +23,17 @@ Create a new alert rule.
 Required:
   --name <name>                    Alert rule name
   --map-id <uuid>                  Map ID (list IDs with 'framedash maps list')
-  --threshold-profile-id <uuid>    Threshold profile ID
-                                   (list IDs with 'framedash threshold-profiles list')
   --metric <metric>                Metric name
   --threshold-level <level>        Threshold level
   --fail-percentage <n>            Failure percentage (0-100)
   --evaluation-days <n>            Evaluation period in days
   --cell-size <n>                  Cell size
   --cooldown-minutes <n>           Cooldown period in minutes
+
+One of the following is required:
+  --threshold-profile-ids <ids>    Threshold profile IDs (comma-separated, up to 10)
+  --threshold-profile-id <uuid>    Threshold profile ID (single-profile bundle)
+                                   (list IDs with 'framedash threshold-profiles list')
 
 Optional:
   --channel-ids <id1,id2,...>      Notification channel IDs (comma-separated)`;
@@ -60,6 +64,7 @@ async function alertsCreate(args: string[]): Promise<void> {
 				name: { type: "string" },
 				"map-id": { type: "string" },
 				"threshold-profile-id": { type: "string" },
+				"threshold-profile-ids": { type: "string" },
 				metric: { type: "string" },
 				"threshold-level": { type: "string" },
 				"fail-percentage": { type: "string" },
@@ -73,7 +78,6 @@ async function alertsCreate(args: string[]): Promise<void> {
 			const required = [
 				"name",
 				"map-id",
-				"threshold-profile-id",
 				"metric",
 				"threshold-level",
 				"fail-percentage",
@@ -88,11 +92,14 @@ async function alertsCreate(args: string[]): Promise<void> {
 					process.exit(1);
 				}
 			}
+			if (!values["threshold-profile-id"] && !values["threshold-profile-ids"]) {
+				error("--threshold-profile-id or --threshold-profile-ids is required");
+				process.exit(1);
+			}
 
 			const body: Record<string, unknown> = {
 				name: values.name,
 				mapId: values["map-id"],
-				thresholdProfileId: values["threshold-profile-id"],
 				metric: values.metric,
 				thresholdLevel: values["threshold-level"],
 				failPercentage: parseNumber(values["fail-percentage"] as string, "fail-percentage"),
@@ -100,9 +107,17 @@ async function alertsCreate(args: string[]): Promise<void> {
 				cellSize: parsePositiveInt(values["cell-size"] as string, "cell-size"),
 				cooldownMinutes: parsePositiveInt(values["cooldown-minutes"] as string, "cooldown-minutes"),
 			};
+			if (values["threshold-profile-ids"]) {
+				body.thresholdProfileIds = parseIds(
+					values["threshold-profile-ids"] as string,
+					"threshold-profile-ids",
+				);
+			} else {
+				body.thresholdProfileId = values["threshold-profile-id"];
+			}
 
 			if (values["channel-ids"]) {
-				body.channelIds = parseChannelIds(values["channel-ids"] as string);
+				body.channelIds = parseIds(values["channel-ids"] as string, "channel-ids");
 			}
 
 			const data = await client.post(client.projectPath("alerts"), body);
@@ -116,11 +131,13 @@ async function alertsUpdate(args: string[]): Promise<void> {
 	await runCommand(
 		{
 			args,
-			help: "Usage: framedash alerts update <alert-id> [--name ...] [--is-active true|false] [--channel-ids id1,id2]",
+			help: "Usage: framedash alerts update <alert-id> [--name ...] [--threshold-profile-id id | --threshold-profile-ids id1,id2] [--is-active true|false] [--channel-ids id1,id2]",
 			options: {
 				name: { type: "string" },
 				"is-active": { type: "string" },
 				"channel-ids": { type: "string" },
+				"threshold-profile-id": { type: "string" },
+				"threshold-profile-ids": { type: "string" },
 				"fail-percentage": { type: "string" },
 				"evaluation-days": { type: "string" },
 				"cooldown-minutes": { type: "string" },
@@ -144,7 +161,15 @@ async function alertsUpdate(args: string[]): Promise<void> {
 				}
 				body.isActive = v === "true";
 			}
-			if (values["channel-ids"]) body.channelIds = parseChannelIds(values["channel-ids"] as string);
+			if (values["threshold-profile-ids"])
+				body.thresholdProfileIds = parseIds(
+					values["threshold-profile-ids"] as string,
+					"threshold-profile-ids",
+				);
+			else if (values["threshold-profile-id"])
+				body.thresholdProfileId = values["threshold-profile-id"];
+			if (values["channel-ids"])
+				body.channelIds = parseIds(values["channel-ids"] as string, "channel-ids");
 			if (values["fail-percentage"])
 				body.failPercentage = parseNumber(values["fail-percentage"] as string, "fail-percentage");
 			if (values["evaluation-days"])
@@ -177,7 +202,7 @@ async function alertsDelete(args: string[]): Promise<void> {
 	await runCommand(
 		{
 			args,
-			help: "Usage: framedash alerts delete <alert-id> [global options]",
+			help: "Usage: framedash alerts delete <alert-id> [global options]\n\nDeactivates the alert rule (soft-delete: it stops firing and no longer counts\nagainst quota, but is retained and can be reactivated with\n'framedash alerts update <alert-id> --is-active true').",
 			allowPositionals: true,
 		},
 		async ({ client, positionals }) => {
@@ -188,18 +213,20 @@ async function alertsDelete(args: string[]): Promise<void> {
 			}
 
 			await client.delete(client.projectPath(`alerts/${encodeURIComponent(alertId)}`));
-			success(`Alert rule ${alertId} deleted`);
+			success(
+				`Alert rule ${alertId} deactivated (reactivate with: framedash alerts update ${alertId} --is-active true)`,
+			);
 		},
 	);
 }
 
-function parseChannelIds(raw: string): string[] {
+function parseIds(raw: string, flag: "channel-ids" | "threshold-profile-ids"): string[] {
 	const ids = raw
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
 	if (ids.length === 0) {
-		error("--channel-ids must contain at least one ID");
+		error(`--${flag} must contain at least one ID`);
 		process.exit(1);
 	}
 	return ids;

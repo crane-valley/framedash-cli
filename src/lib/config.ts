@@ -28,7 +28,8 @@ export type CliConfig = {
 
 const NO_CREDENTIAL_MESSAGE =
 	"No credentials found: pass --api-key/--api-key-file, set FRAMEDASH_API_KEY, " +
-	"or run 'framedash login' (interactive). CI/non-interactive use should set FRAMEDASH_API_KEY.";
+	"or run 'framedash login' (interactive). CI/non-interactive use should set FRAMEDASH_API_KEY. " +
+	"Create a key on your project's API Keys page at https://app.framedash.dev. Docs: https://docs.framedash.dev.";
 
 /** Resolve --base-url/--format (and env fallbacks) for commands that need no credential. */
 export function resolveBaseAndFormat(values: Record<string, unknown>): {

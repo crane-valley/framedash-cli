@@ -55,6 +55,10 @@ describe("isRegressionMetric", () => {
 		expect(isRegressionMetric("load_time_ms")).toBe(true);
 	});
 
+	it("accepts the VRAM metric", () => {
+		expect(isRegressionMetric("mem.vram")).toBe(true);
+	});
+
 	it("rejects unknown metrics", () => {
 		expect(isRegressionMetric("fps")).toBe(false);
 		expect(isRegressionMetric("io.write_bytes")).toBe(false);
@@ -144,6 +148,22 @@ describe("evaluateRegression", () => {
 		expect(v.failed).toBe(true);
 		expect(v.offenders.map((o) => o.metric)).toEqual(["io.read_bytes"]);
 		expect(v.evaluated).toHaveLength(1);
+	});
+
+	it("gates on mem.vram like any other lower-is-better metric", () => {
+		const v = evaluateRegression(comparison([diff("mem.vram", 20)]), {
+			metric: "mem.vram",
+		});
+		expect(v.failed).toBe(true);
+		expect(v.offenders.map((o) => o.metric)).toEqual(["mem.vram"]);
+	});
+
+	it("treats a zero-baseline mem.vram as not comparable (VRAM 0 is degenerate, not zero-meaningful)", () => {
+		// Unlike io.* / load_time_ms, mem.vram is a memory gauge: a 0 reading is a
+		// degenerate/unavailable sample, so a zero baseline stays "not comparable".
+		const v = evaluateRegression(comparison([zeroBaselineDiff("mem.vram", 512_000_000)]));
+		expect(v.failed).toBe(false);
+		expect(v.evaluated).toHaveLength(0);
 	});
 
 	it("gates on load_time_ms like any other lower-is-better metric", () => {

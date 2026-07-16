@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { ApiClient } from "@framedash/api-client";
+import { type ApiClient, ApiError } from "@framedash/api-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runProfileTest } from "../commands/run-profile-test.js";
 import type { ApiBuildComparison, ApiMetricDiff } from "../lib/perf-diff-eval.js";
@@ -222,6 +222,96 @@ describe("run-profile-test command", () => {
 		// Aborted before launching the game.
 		expect(spawn).not.toHaveBeenCalled();
 		restore();
+	});
+
+	it("fails closed with a rate-limit message when the pre-run 429 exceeds the retry cap", async () => {
+		const { restore } = expectExit();
+		// Retry-After of 200s is beyond the 120s cap: fail fast, do not retry.
+		const err = new ApiError("rate limited", 429, new Headers(), { retry_after: 200 });
+		const client = mockClient({ get: vi.fn().mockRejectedValueOnce(err) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await expect(runProfileTest(["--command", "game", "--build-id", "cand"])).rejects.toThrow(
+			"process.exit",
+		);
+		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("hourly rate limit"));
+		// Fail closed: never launched the game.
+		expect(spawn).not.toHaveBeenCalled();
+		restore();
+	});
+
+	it("fails closed without retrying on a non-retryable 429 (limiter failed closed)", async () => {
+		const { restore } = expectExit();
+		// Fail-closed limiter: 429 with no retry_after / retryable=false.
+		const err = new ApiError("rate limited", 429, new Headers());
+		const get = vi.fn().mockRejectedValue(err);
+		const client = mockClient({ get });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await expect(runProfileTest(["--command", "game", "--build-id", "cand"])).rejects.toThrow(
+			"process.exit",
+		);
+		expect(loggerModule.error).toHaveBeenCalledWith(
+			expect.stringContaining("temporarily unavailable"),
+		);
+		// Not retried: exactly one snapshot fetch, and the game never launched.
+		expect(get).toHaveBeenCalledTimes(1);
+		expect(spawn).not.toHaveBeenCalled();
+		restore();
+	});
+
+	it("reports a malformed 429 Retry-After as a fail-closed limiter, not a cap breach", async () => {
+		const { restore } = expectExit();
+		// A negative retry_after is invalid: the call site must NOT report it as a
+		// rate-limit window (that is the isValidRetryAfter gap Gemini flagged).
+		const err = new ApiError("rate limited", 429, new Headers(), { retry_after: -5 });
+		const get = vi.fn().mockRejectedValue(err);
+		const client = mockClient({ get });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await expect(runProfileTest(["--command", "game", "--build-id", "cand"])).rejects.toThrow(
+			"process.exit",
+		);
+		expect(loggerModule.error).toHaveBeenCalledWith(
+			expect.stringContaining("temporarily unavailable"),
+		);
+		expect(loggerModule.error).not.toHaveBeenCalledWith(
+			expect.stringContaining("hourly rate limit"),
+		);
+		// Not retried, and the game never launched.
+		expect(get).toHaveBeenCalledTimes(1);
+		expect(spawn).not.toHaveBeenCalled();
+		restore();
+	});
+
+	it("retries the pre-run snapshot on a 429 with Retry-After, then proceeds", async () => {
+		vi.useFakeTimers();
+		const err = new ApiError("rate limited", 429, new Headers(), { retry_after: 1 });
+		const get = vi
+			.fn()
+			.mockRejectedValueOnce(err) // pre-run snapshot: rate limited
+			.mockResolvedValueOnce([]) // pre-run snapshot retry: count 0
+			.mockResolvedValueOnce(ingested); // ingest poll: grown
+		const client = mockClient({ get });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		const run = runProfileTest(["--command", "game", "--build-id", "cand"]).catch(
+			(e: unknown) => e,
+		);
+		// Fire the 1s Retry-After backoff, then drain the launch + ingest poll.
+		await vi.advanceTimersByTimeAsync(1000);
+		await vi.runAllTimersAsync();
+		const outcome = await run;
+
+		expect(outcome).toBeUndefined();
+		expect(loggerModule.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Rate limited (429) reading the pre-run event count"),
+		);
+		expect(loggerModule.success).toHaveBeenCalledWith(
+			expect.stringContaining("Profiling run complete"),
+		);
+		expect(loggerModule.error).not.toHaveBeenCalled();
+		vi.useRealTimers();
 	});
 
 	it("fails closed when the pre-run snapshot is not an array", async () => {

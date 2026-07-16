@@ -1,6 +1,11 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
-import { type ApiClient, buildBuildComparePath, buildBuildsPath } from "@framedash/api-client";
+import {
+	type ApiClient,
+	ApiError,
+	buildBuildComparePath,
+	buildBuildsPath,
+} from "@framedash/api-client";
 import type { CliConfig } from "../lib/config.js";
 import { createClient } from "../lib/create-client.js";
 import { formatOutput } from "../lib/formatters.js";
@@ -18,11 +23,13 @@ import {
 	type BuildListEntry,
 	buildEventCount,
 	buildSessionEnv,
+	isValidRetryAfter,
 	planTreeKill,
 	resolveProfileIdentity,
 	SESSION_ENV_KEYS,
 	validateSeconds,
 	waitForIngest,
+	withRateLimitRetry,
 } from "../lib/run-profile-test-lib.js";
 
 const DEFAULT_INGEST_TIMEOUT_S = 180;
@@ -97,7 +104,7 @@ function resolveGateOptions(values: Values, candidateBuildId: string): GateOptio
 		const raw = (values.metric as string).trim();
 		if (!isRegressionMetric(raw)) {
 			error(
-				`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms`,
+				`Invalid --metric '${raw}'. Allowed: frame_time, memory, gpu_time, io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms, mem.vram`,
 			);
 			process.exit(1);
 		}
@@ -293,8 +300,42 @@ async function readPriorEventCount(
 ): Promise<number> {
 	let builds: BuildListEntry[];
 	try {
-		builds = await fetchBuilds(client, values, buildId);
+		// A transient 429 here (the per-account hourly API quota) must not abort the
+		// gate before the engine even launches: honor Retry-After and retry, capped
+		// so a long quota reset fails fast instead of stalling CI. Still fail closed
+		// -- the snapshot is never skipped.
+		builds = await withRateLimitRetry(() => fetchBuilds(client, values, buildId), {
+			sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+			onRetry: ({ attempt, waitMs, maxAttempts }) =>
+				warn(
+					`Rate limited (429) reading the pre-run event count; retrying in ` +
+						`${Math.round(waitMs / 1000)}s (attempt ${attempt}/${maxAttempts - 1}).`,
+				),
+		});
 	} catch (err) {
+		if (err instanceof ApiError && err.status === 429) {
+			// A usable Retry-After means a real rate-limit window (the API enforces
+			// both per-account and per-key/token hourly limits, either of which sets
+			// it); its absence -- or a malformed null/NaN/negative value -- means the
+			// limiter failed closed (retryable=false, Redis outage), a transient
+			// condition, not a rate-limit problem. Share the exact validity check with
+			// withRateLimitRetry so the "retry vs. report" decisions cannot drift.
+			if (isValidRetryAfter(err.retryAfter)) {
+				error(
+					`Rate limited (429) reading the build's pre-run event count, and the retry ` +
+						`budget (or the Retry-After delay) exceeded the cap. ${err.message} Wait for ` +
+						`the hourly rate limit to reset and re-run. Aborting before launch (the pre-run ` +
+						`snapshot is required and must not be skipped).`,
+				);
+			} else {
+				error(
+					"Rate limited (429) reading the build's pre-run event count: the API rate " +
+						"limiter is temporarily unavailable (failed closed). Retry shortly. Aborting " +
+						"before launch (the pre-run snapshot is required and must not be skipped).",
+				);
+			}
+			process.exit(1);
+		}
 		error(
 			`Could not read the build's pre-run event count (${
 				err instanceof Error ? err.message : String(err)
@@ -634,8 +675,8 @@ id is not satisfied by old data):
 Regression gate (runs only when --baseline is set):
   --baseline <id>        Known-good build_id to compare the candidate against
   --metric <name>        Gate on one metric: frame_time, memory, gpu_time,
-                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms
-                         (default: all)
+                         io.read_bytes, io.read_time_ms, io.read_ops, load_time_ms,
+                         mem.vram (default: all)
   --threshold <pct>      Tolerate a regression up to this percent (default: 0)
   --fail-on-regression   Exit 1 on a regression beyond the threshold (needs --baseline)
   --days <n>             Comparison window in days: 7, 14, 30, 90 (default: 30)

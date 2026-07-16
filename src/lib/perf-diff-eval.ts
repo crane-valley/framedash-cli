@@ -9,8 +9,10 @@
  * Lower-is-better performance metrics perf-diff can gate on. Mirrors the web
  * app's RegressionMetric registry (apps/web .../regression-types.ts): the core
  * three fixed perf fields, the disk io.* metrics carried in the events_v2 metrics
- * map on perf_heartbeat, and load_time_ms carried in the metrics map on map_load
- * events (appended LAST so existing io.* wire positions are unchanged).
+ * map on perf_heartbeat, load_time_ms carried in the metrics map on map_load
+ * events, and mem.vram carried in the metrics map on perf_heartbeat AND
+ * position-qualified player events (so it is map-filterable). Each NEW metric is
+ * appended LAST so every existing wire position is unchanged.
  */
 export type RegressionMetric =
 	| "frame_time"
@@ -19,7 +21,8 @@ export type RegressionMetric =
 	| "io.read_bytes"
 	| "io.read_time_ms"
 	| "io.read_ops"
-	| "load_time_ms";
+	| "load_time_ms"
+	| "mem.vram";
 
 export const REGRESSION_METRICS: readonly RegressionMetric[] = [
 	"frame_time",
@@ -29,6 +32,7 @@ export const REGRESSION_METRICS: readonly RegressionMetric[] = [
 	"io.read_time_ms",
 	"io.read_ops",
 	"load_time_ms",
+	"mem.vram",
 ];
 
 export function isRegressionMetric(value: string): value is RegressionMetric {

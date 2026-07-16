@@ -104,6 +104,17 @@ describe("alerts command", () => {
 			expect(body.channelIds).toEqual(["ch1", "ch2", "ch3"]);
 		});
 
+		it("sends a multi-profile bundle and lets the plural flag win", async () => {
+			const client = mockClient({ post: vi.fn().mockResolvedValue({}) });
+			vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+			await alerts(["create", ...requiredFlags, "--threshold-profile-ids", "tp-uuid-2,tp-uuid-3"]);
+
+			const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+			expect(body.thresholdProfileIds).toEqual(["tp-uuid-2", "tp-uuid-3"]);
+			expect(body).not.toHaveProperty("thresholdProfileId");
+		});
+
 		it("exits with error on invalid numeric flag", async () => {
 			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
 				throw new Error("process.exit");
@@ -138,6 +149,16 @@ describe("alerts command", () => {
 	});
 
 	describe("update", () => {
+		it("updates the threshold profile bundle", async () => {
+			const client = mockClient({ patch: vi.fn().mockResolvedValue({}) });
+			vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+			await alerts(["update", "alert-1", "--threshold-profile-ids", "tp-1,tp-2"]);
+
+			expect(client.patch).toHaveBeenCalledWith(expect.stringContaining("alerts/alert-1"), {
+				thresholdProfileIds: ["tp-1", "tp-2"],
+			});
+		});
 		it("sends PATCH with updated fields", async () => {
 			const updated = { id: "alert-1", name: "Updated Alert" };
 			const client = mockClient({ patch: vi.fn().mockResolvedValue(updated) });
@@ -200,7 +221,9 @@ describe("alerts command", () => {
 			await alerts(["delete", "alert-to-remove"]);
 
 			expect(client.delete).toHaveBeenCalledWith(expect.stringContaining("alerts/alert-to-remove"));
-			expect(loggerModule.success).toHaveBeenCalledWith("Alert rule alert-to-remove deleted");
+			expect(loggerModule.success).toHaveBeenCalledWith(
+				expect.stringContaining("Alert rule alert-to-remove deactivated"),
+			);
 		});
 
 		it("exits with error when no alert ID provided", async () => {
@@ -214,6 +237,16 @@ describe("alerts command", () => {
 			);
 
 			exitSpy.mockRestore();
+		});
+
+		it("delete --help describes the soft-delete/reactivate semantics", async () => {
+			await alerts(["delete", "--help"]);
+			const help = vi
+				.mocked(loggerModule.log)
+				.mock.calls.map((c) => String(c[0]))
+				.join("\n");
+			expect(help).toContain("Deactivates the alert rule");
+			expect(help).toContain("--is-active true");
 		});
 	});
 
@@ -229,6 +262,13 @@ describe("alerts command", () => {
 			await alerts(["--help"]);
 			expect(loggerModule.log).toHaveBeenCalledWith(
 				expect.stringContaining("framedash alerts <subcommand>"),
+			);
+		});
+
+		it("top-level help describes delete as a deactivation", async () => {
+			await alerts(["--help"]);
+			expect(loggerModule.log).toHaveBeenCalledWith(
+				expect.stringContaining("Deactivate an alert rule"),
 			);
 		});
 

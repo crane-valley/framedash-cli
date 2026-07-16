@@ -31,7 +31,11 @@ import { login } from "../commands/login.js";
 import * as loggerModule from "../lib/logger.js";
 import { startLoopbackServer } from "../lib/oauth/loopback-server.js";
 import { computeS256CodeChallenge } from "../lib/oauth/pkce.js";
-import { exchangeAuthorizationCode, revokeToken } from "../lib/oauth/token-endpoint.js";
+import {
+	exchangeAuthorizationCode,
+	OAuthTokenRequestError,
+	revokeToken,
+} from "../lib/oauth/token-endpoint.js";
 import { saveStoredEntry } from "../lib/oauth/token-store.js";
 
 type FakeServer = {
@@ -254,6 +258,36 @@ describe("login command", () => {
 		vi.mocked(revokeToken).mockRejectedValueOnce(new Error("network down"));
 
 		await expect(login(["--no-browser"])).rejects.toThrow(/disk full/);
+	});
+
+	it("prints the raw error then a redirect_uri hint, sets exit code 1, and closes the server on an invalid_grant mismatch", async () => {
+		const server = fakeServer();
+		vi.mocked(startLoopbackServer).mockResolvedValue(server as never);
+		vi.mocked(exchangeAuthorizationCode).mockRejectedValue(
+			new OAuthTokenRequestError(
+				"invalid_grant",
+				"redirect_uri does not match the authorization request",
+				400,
+			),
+		);
+		// Restore the process exit code so a failed login here cannot make vitest
+		// itself exit non-zero.
+		const prevExitCode = process.exitCode;
+		try {
+			// No throw: the function unwinds through `finally` (closing the loopback
+			// server) and signals failure via process.exitCode instead of process.exit.
+			await expect(login(["--no-browser"])).resolves.toBeUndefined();
+			expect(process.exitCode).toBe(1);
+			const errors = vi.mocked(loggerModule.error).mock.calls.map((c) => String(c[0]));
+			// Raw server error FIRST, then the actionable fix.
+			expect(errors[0]).toContain("redirect_uri");
+			expect(errors[1]).toContain("EXACTLY as-is");
+			expect(saveStoredEntry).not.toHaveBeenCalled();
+			// The loopback server must be closed before the process exits.
+			expect(server.close).toHaveBeenCalled();
+		} finally {
+			process.exitCode = prevExitCode;
+		}
 	});
 
 	it("shows help without starting a server", async () => {
