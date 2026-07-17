@@ -6,10 +6,25 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-17
+
+### Added
+
+- `framedash threshold-profiles create`: create a threshold profile (perf budget)
+  via the API/CLI without opening the dashboard.
+
 ## [0.1.6] - 2026-07-17
 
 ### Added
 
+- `framedash alerts create` / `framedash alerts update`:
+  `--threshold-profile-ids <id1,id2,...>` attaches up to 10 threshold
+  profiles to a single alert rule (each profile fires and resolves
+  independently). The existing `--threshold-profile-id` remains for the
+  single-profile case; `alerts create` requires at least one of the two,
+  and when both are supplied `--threshold-profile-ids` takes precedence.
+  (This entry was backfilled: the flag shipped in 0.1.6 but was missing
+  from the changelog at publish time.)
 - Package `description` and `keywords` for discoverability on npm.
 
 ### Changed

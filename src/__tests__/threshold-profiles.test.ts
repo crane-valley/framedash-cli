@@ -67,6 +67,77 @@ describe("threshold-profiles command", () => {
 		});
 	});
 
+	describe("create", () => {
+		it("posts a threshold profile and outputs the result", async () => {
+			const created = { id: "tp1", name: "Desktop QA" };
+			const client = mockClient({ post: vi.fn().mockResolvedValue(created) });
+			vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+			await thresholdProfiles([
+				"create",
+				"--name",
+				"Desktop QA",
+				"--fps-good",
+				"60",
+				"--fps-warn",
+				"30",
+				"--frame-time-good",
+				"16",
+				"--frame-time-warn",
+				"33",
+				"--memory-good",
+				"512",
+				"--memory-warn",
+				"1024",
+				"--gpu-time-good",
+				"16",
+				"--gpu-time-warn",
+				"33",
+				"--platform",
+				"windows",
+				"--resolution",
+				"1920x1080",
+				"--build-config",
+				"shipping",
+				"--gpu",
+				"RTX 4090",
+				"--storage",
+				"NVMe",
+			]);
+
+			expect(client.post).toHaveBeenCalledWith("/api/v1/projects/test-project/threshold-profiles", {
+				name: "Desktop QA",
+				fpsGood: "60",
+				fpsWarn: "30",
+				frameTimeGood: "16",
+				frameTimeWarn: "33",
+				memoryGood: "512",
+				memoryWarn: "1024",
+				gpuTimeGood: "16",
+				gpuTimeWarn: "33",
+				platform: "windows",
+				resolution: "1920x1080",
+				buildConfig: "shipping",
+				gpu: "RTX 4090",
+				storage: "NVMe",
+			});
+			expect(loggerModule.success).toHaveBeenCalledWith("Threshold profile created");
+			expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(created, null, 2));
+		});
+
+		it("requires name", async () => {
+			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+				throw new Error("process.exit");
+			}) as never);
+
+			await expect(thresholdProfiles(["create"])).rejects.toThrow("process.exit");
+			expect(loggerModule.error).toHaveBeenCalledWith("--name is required");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+
+			exitSpy.mockRestore();
+		});
+	});
+
 	describe("subcommand dispatch", () => {
 		it("shows help when no subcommand given", async () => {
 			await thresholdProfiles([]);
@@ -80,9 +151,9 @@ describe("threshold-profiles command", () => {
 				throw new Error("process.exit");
 			}) as never);
 
-			await expect(thresholdProfiles(["create"])).rejects.toThrow("process.exit");
+			await expect(thresholdProfiles(["unknown"])).rejects.toThrow("process.exit");
 			expect(loggerModule.error).toHaveBeenCalledWith(
-				"Unknown threshold-profiles subcommand: create",
+				"Unknown threshold-profiles subcommand: unknown",
 			);
 
 			exitSpy.mockRestore();
