@@ -314,6 +314,30 @@ describe("run-profile-test command", () => {
 		vi.useRealTimers();
 	});
 
+	it("surfaces an ingest poll failure while continuing to a successful ingest", async () => {
+		vi.useFakeTimers();
+		const get = vi
+			.fn()
+			.mockResolvedValueOnce([])
+			.mockRejectedValueOnce(new Error("503 from ingest"))
+			.mockResolvedValueOnce(ingested);
+		const client = mockClient({ get });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		const run = runProfileTest(["--command", "game", "--build-id", "cand"]).catch(
+			(e: unknown) => e,
+		);
+		await vi.runAllTimersAsync();
+		const outcome = await run;
+
+		expect(outcome).toBeUndefined();
+		expect(loggerModule.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Ingest poll attempt 1 failed"),
+		);
+		expect(loggerModule.success).toHaveBeenCalledWith(expect.stringContaining("ingested"));
+		vi.useRealTimers();
+	});
+
 	it("fails closed when the pre-run snapshot is not an array", async () => {
 		const { restore } = expectExit();
 		// A non-error response that is not a build array (malformed 200).

@@ -79,7 +79,9 @@ describe("content command", () => {
 
 	describe("import", () => {
 		it("reads JSON file and sends POST", async () => {
-			const importData = [{ contentType: "item", contentId: "shield", data: {} }];
+			const importData = [
+				{ contentType: "item", contentId: "shield", displayName: "Shield", data: {} },
+			];
 			const filePath = join(tmpdir(), `framedash-content-${Date.now()}.json`);
 			tmpFiles.push(filePath);
 			await writeFile(filePath, JSON.stringify(importData));
@@ -98,7 +100,7 @@ describe("content command", () => {
 
 		it("passes object payload as-is (not wrapping in entries)", async () => {
 			const importData = {
-				entries: [{ contentType: "npc", contentId: "guard", data: {} }],
+				entries: [{ contentType: "npc", contentId: "guard", displayName: "Guard", data: {} }],
 			};
 			const filePath = join(tmpdir(), `framedash-content-obj-${Date.now()}.json`);
 			tmpFiles.push(filePath);
@@ -149,6 +151,28 @@ describe("content command", () => {
 
 			await expect(content(["import", filePath])).rejects.toThrow("process.exit");
 			expect(loggerModule.error).toHaveBeenCalledWith("Invalid JSON file");
+
+			exitSpy.mockRestore();
+		});
+
+		it("reports the entry index, required fields, and accepted value types", async () => {
+			const filePath = join(tmpdir(), `framedash-invalid-entry-${Date.now()}.json`);
+			tmpFiles.push(filePath);
+			await writeFile(filePath, JSON.stringify([{ contentType: "item", contentId: 42 }]));
+
+			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+				throw new Error("process.exit");
+			}) as never);
+
+			await expect(content(["import", filePath])).rejects.toThrow("process.exit");
+			expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("Entry 1"));
+			expect(loggerModule.error).toHaveBeenCalledWith(
+				expect.stringContaining("contentType, contentId, displayName"),
+			);
+			expect(loggerModule.error).toHaveBeenCalledWith(
+				expect.stringContaining("metadata must be an object"),
+			);
+			expect(createClientModule.createClient).toHaveBeenCalled();
 
 			exitSpy.mockRestore();
 		});

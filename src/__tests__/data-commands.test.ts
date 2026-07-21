@@ -52,6 +52,16 @@ describe("status command", () => {
 		expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(statusData, null, 2));
 	});
 
+	it("bypasses the status cache with --fresh", async () => {
+		const client = mockClient({ get: vi.fn().mockResolvedValue({ kpis: { fetchedAt: 1 } }) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await status(["--fresh"]);
+
+		expect(client.projectPath).toHaveBeenCalledWith("status?fresh=1");
+		expect(client.get).toHaveBeenCalledWith("/api/v1/projects/test-project/status?fresh=1");
+	});
+
 	it("shows help with --help", async () => {
 		await status(["--help"]);
 		expect(loggerModule.log).toHaveBeenCalledWith(

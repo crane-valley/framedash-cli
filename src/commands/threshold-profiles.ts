@@ -4,11 +4,12 @@ import { runCommand, withSubcommands } from "../lib/run-command.js";
 
 const HELP = `Usage: framedash threshold-profiles <subcommand> [options]
 
-List or create threshold profiles (performance budgets used by alert rules).
+List, create, or delete threshold profiles (performance budgets used by alert rules).
 
 Subcommands:
   list                   List threshold profiles
   create                 Create a new threshold profile
+  delete <profile-id>    Delete a threshold profile
 
 Run 'framedash threshold-profiles <subcommand> --help' for more info.`;
 
@@ -34,9 +35,14 @@ Optional:
   --gpu <value>                    GPU filter
   --storage <value>                Storage filter`;
 
+const DELETE_HELP = `Usage: framedash threshold-profiles delete <profile-id> [global options]
+
+Delete a threshold profile.`;
+
 export const thresholdProfiles = withSubcommands("threshold-profiles", HELP, {
 	list: thresholdProfilesList,
 	create: thresholdProfilesCreate,
+	delete: thresholdProfilesDelete,
 });
 
 async function thresholdProfilesList(args: string[]): Promise<void> {
@@ -104,6 +110,28 @@ async function thresholdProfilesCreate(args: string[]): Promise<void> {
 			const data = await client.post(client.projectPath("threshold-profiles"), body);
 			success("Threshold profile created");
 			log(formatOutput(data, config.format));
+		},
+	);
+}
+
+async function thresholdProfilesDelete(args: string[]): Promise<void> {
+	await runCommand(
+		{
+			args,
+			help: DELETE_HELP,
+			allowPositionals: true,
+		},
+		async ({ client, positionals }) => {
+			const profileId = positionals[0];
+			if (!profileId) {
+				error("Threshold profile ID is required: framedash threshold-profiles delete <profile-id>");
+				process.exit(1);
+			}
+
+			await client.delete(
+				client.projectPath(`threshold-profiles/${encodeURIComponent(profileId)}`),
+			);
+			success(`Threshold profile ${profileId} deleted`);
 		},
 	);
 }

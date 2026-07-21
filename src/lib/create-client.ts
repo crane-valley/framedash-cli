@@ -46,9 +46,12 @@ function printAndExit(err: ApiError): never {
 		} else {
 			const reset = err.headers.get("X-RateLimit-Reset");
 			const resetNum = reset ? Number(reset) : Number.NaN;
+			// The server (apps/web/src/lib/api-rate-limit.ts, setRateLimitHeaders)
+			// emits this header as a millisecond unix timestamp, not seconds --
+			// parse it directly, no *1000 conversion.
 			const resetStr =
 				!Number.isNaN(resetNum) && resetNum > 0
-					? new Date(resetNum * 1000).toLocaleTimeString()
+					? new Date(resetNum).toLocaleTimeString()
 					: "unknown";
 			error(`Rate limit exceeded (429). Resets at ${resetStr}.`);
 		}

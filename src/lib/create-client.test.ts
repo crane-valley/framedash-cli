@@ -185,6 +185,34 @@ describe("createClient", () => {
 		await expect(client.get("/api/v1/projects")).rejects.toMatchObject({ status: 500 });
 	});
 
+	it("prints the X-RateLimit-Reset header as a millisecond timestamp, not seconds", async () => {
+		// Server (apps/web/src/lib/api-rate-limit.ts) emits X-RateLimit-Reset in
+		// ms; misreading it as seconds turns a few-seconds-away reset into a
+		// date decades in the future.
+		const resetAtMs = Date.now() + 5_000;
+		const response = new Response(JSON.stringify({ success: false, title: "rate limited" }), {
+			status: 429,
+			headers: {
+				"Content-Type": "application/problem+json",
+				"X-RateLimit-Reset": String(resetAtMs),
+			},
+		});
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+			throw new Error("process.exit");
+		}) as never);
+		try {
+			const client = createClient(BASE_URL, oauthCredential(3_600_000), "proj-1");
+			await expect(client.get("/api/v1/projects")).rejects.toThrow("process.exit");
+			const expected = new Date(resetAtMs).toLocaleTimeString();
+			expect(loggerModule.error).toHaveBeenCalledWith(
+				expect.stringContaining(`Resets at ${expected}.`),
+			);
+		} finally {
+			exitSpy.mockRestore();
+		}
+	});
+
 	it("withProject keeps the OAuth credential and changes only the project", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(apiSuccess([]));
 		vi.stubGlobal("fetch", fetchMock);

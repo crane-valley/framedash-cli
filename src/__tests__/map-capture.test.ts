@@ -38,6 +38,7 @@ const defaultOpts = {
 	credential: undefined as UploadCredential | undefined,
 	projectId: undefined as string | undefined,
 	baseUrl: undefined as string | undefined,
+	metadataPattern: undefined as string | undefined,
 };
 
 beforeEach(async () => {
@@ -166,6 +167,32 @@ describe("mapCapture", () => {
 		});
 		expect(result).toEqual({ ok: false, successCount: 1, errorCount: 1 });
 		expect(stdoutWrite).toHaveBeenCalledWith(expect.stringContaining("1 succeeded, 1 failed"));
+	});
+
+	it("filters unrelated JSON files with --metadata-pattern", async () => {
+		await writeFile(join(tempDir, "level.capture.json"), validSidecar());
+		await writeFile(join(tempDir, "package.json"), JSON.stringify({ private: true }));
+		await writeFile(join(tempDir, "test.png"), TINY_PNG);
+
+		const result = await mapCapture({
+			...defaultOpts,
+			inputDir: tempDir,
+			dryRun: true,
+			metadataPattern: "*.capture.json",
+		});
+
+		expect(result).toEqual({ ok: true, successCount: 1, errorCount: 0 });
+		expect(stderrWrite).not.toHaveBeenCalledWith(expect.stringContaining("package.json"));
+	});
+
+	it("explains how to isolate metadata when unrelated JSON fails validation", async () => {
+		await writeFile(join(tempDir, "package.json"), JSON.stringify({ private: true }));
+
+		await mapCapture({ ...defaultOpts, inputDir: tempDir, dryRun: true });
+
+		expect(stderrWrite).toHaveBeenCalledWith(
+			expect.stringContaining("--metadata-pattern '*.capture.json'"),
+		);
 	});
 
 	it("validates without uploading when neither --upload nor --dry-run", async () => {

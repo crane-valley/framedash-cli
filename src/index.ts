@@ -24,7 +24,7 @@ Commands:
   query          Execute a read-only ClickHouse query
   alerts         Manage alert rules (list, create, update, delete)
   maps           Manage maps (list, delete)
-  threshold-profiles  List/create threshold profiles (perf budgets for alerts)
+  threshold-profiles  List/create/delete threshold profiles (perf budgets for alerts)
   content        Manage content registry (list, import, delete)
   map-capture    Upload captured map images
 

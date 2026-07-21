@@ -435,11 +435,13 @@ describe("waitForIngest", () => {
 
 	it("keeps polling through a transient fetch error", async () => {
 		const clock = fakeClock();
+		const onPollError = vi.fn();
+		const failure = new Error("503 from ingest");
 		let calls = 0;
 		const ok = await waitForIngest({
 			fetchBuilds: async () => {
 				calls++;
-				if (calls === 1) throw new Error("503 from ingest");
+				if (calls === 1) throw failure;
 				return [{ build_id: "cand", event_count: 1 }];
 			},
 			buildId: "cand",
@@ -447,8 +449,11 @@ describe("waitForIngest", () => {
 			intervalMs: 10,
 			now: clock.now,
 			sleep: clock.sleep,
+			onPollError,
 		});
 		expect(ok).toBe(true);
 		expect(calls).toBe(2);
+		expect(onPollError).toHaveBeenCalledOnce();
+		expect(onPollError).toHaveBeenCalledWith(failure, 1);
 	});
 });
