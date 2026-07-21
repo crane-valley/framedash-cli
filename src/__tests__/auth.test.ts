@@ -55,11 +55,23 @@ describe("auth command", () => {
 		expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(projects, null, 2));
 	});
 
+	it("keeps JSON on stdout while reporting validation on stderr", async () => {
+		const projects = [{ id: "p1", name: "Project Alpha" }];
+		const client = mockClient({ get: vi.fn().mockResolvedValue(projects) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await auth(["--format", "json"]);
+
+		expect(loggerModule.success).toHaveBeenCalledWith("API key is valid");
+		expect(loggerModule.log).toHaveBeenCalledTimes(1);
+		expect(() => JSON.parse(vi.mocked(loggerModule.log).mock.calls[0]?.[0] ?? "")).not.toThrow();
+	});
+
 	it("reports the flag as the credential source when --api-key is passed", async () => {
 		const client = mockClient({ get: vi.fn().mockResolvedValue([]) });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
-		await auth(["--api-key", "fd_override_key"]);
+		await auth(["--api-key", "fd_override_key", "--format", "table"]);
 
 		expect(loggerModule.success).toHaveBeenCalledWith(
 			"Credential source: API key from --api-key flag",

@@ -6,6 +6,24 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-22
+
+### Added
+
+- `framedash threshold-profiles delete <profile-id>`: delete a threshold
+  profile via the API/CLI without opening the dashboard. Returns a conflict
+  if the profile is still referenced by an alert rule.
+
+### Fixed
+
+- `framedash run-profile-test`: report the first failed ingest poll while
+  continuing to retry, so a transient API failure no longer looks like an
+  unexplained hang at the waiting step.
+- 429 fallback message misread `X-RateLimit-Reset` as a seconds unix
+  timestamp; the server has always emitted it in milliseconds (#1304
+  confirmed this contract), so an absent `Retry-After` produced an
+  absurd far-future "Resets at" time. Parsed as milliseconds now.
+
 ## [0.1.7] - 2026-07-17
 
 ### Added

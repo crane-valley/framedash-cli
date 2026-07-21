@@ -44,7 +44,11 @@ async function contentImport(args: string[]): Promise<void> {
 	await runCommand(
 		{
 			args,
-			help: "Usage: framedash content import <file.json> [global options]",
+			help: `Usage: framedash content import <file.json> [global options]
+
+Accepted JSON: an array or { "entries": [...] }. Each entry requires non-empty
+string fields contentType, contentId, and displayName. Optional description and
+category are strings or null; metadata is an object or null.`,
 			allowPositionals: true,
 		},
 		async ({ client, config, positionals }) => {
@@ -73,12 +77,67 @@ async function contentImport(args: string[]): Promise<void> {
 
 			// Accept both { entries: [...] } and plain [...]
 			const payload = Array.isArray(entries) ? { entries } : entries;
+			const validationError = validateContentImportPayload(payload);
+			if (validationError) {
+				error(validationError);
+				process.exit(1);
+			}
 
 			const data = await client.post("/api/v1/content", payload);
 			success("Content imported");
 			log(formatOutput(data, config.format));
 		},
 	);
+}
+
+const CONTENT_IMPORT_SHAPE =
+	"Required fields: contentType, contentId, displayName (non-empty strings). " +
+	"Optional: description/category must be strings or null; metadata must be an object or null.";
+
+function validateContentImportPayload(payload: unknown): string | null {
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+		return `Import JSON must be an array or an object with an entries array. ${CONTENT_IMPORT_SHAPE}`;
+	}
+	const entries = (payload as { entries?: unknown }).entries;
+	if (!Array.isArray(entries) || entries.length === 0) {
+		return `Import JSON must contain a non-empty entries array. ${CONTENT_IMPORT_SHAPE}`;
+	}
+	for (const [index, entry] of entries.entries()) {
+		const validationError = validateContentImportEntry(entry, index + 1);
+		if (validationError) {
+			return validationError;
+		}
+	}
+	return null;
+}
+
+function validateContentImportEntry(entry: unknown, entryNumber: number): string | null {
+	if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+		return `Entry ${entryNumber} must be an object. ${CONTENT_IMPORT_SHAPE}`;
+	}
+	const record = entry as Record<string, unknown>;
+	for (const field of ["contentType", "contentId", "displayName"] as const) {
+		if (typeof record[field] !== "string" || record[field].trim().length === 0) {
+			return `Entry ${entryNumber}: ${field} is required and must be a non-empty string. ${CONTENT_IMPORT_SHAPE}`;
+		}
+	}
+	for (const field of ["description", "category"] as const) {
+		if (
+			record[field] !== undefined &&
+			record[field] !== null &&
+			typeof record[field] !== "string"
+		) {
+			return `Entry ${entryNumber}: ${field} must be a string or null. ${CONTENT_IMPORT_SHAPE}`;
+		}
+	}
+	if (
+		record.metadata !== undefined &&
+		record.metadata !== null &&
+		(typeof record.metadata !== "object" || Array.isArray(record.metadata))
+	) {
+		return `Entry ${entryNumber}: metadata must be an object or null. ${CONTENT_IMPORT_SHAPE}`;
+	}
+	return null;
 }
 
 async function contentDelete(args: string[]): Promise<void> {

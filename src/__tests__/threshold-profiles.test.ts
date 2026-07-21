@@ -138,6 +138,37 @@ describe("threshold-profiles command", () => {
 		});
 	});
 
+	describe("delete", () => {
+		it("sends DELETE for the specified threshold profile", async () => {
+			const client = mockClient({ delete: vi.fn().mockResolvedValue(undefined) });
+			vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+			await thresholdProfiles(["delete", "profile-to-remove"]);
+
+			expect(client.projectPath).toHaveBeenCalledWith("threshold-profiles/profile-to-remove");
+			expect(client.delete).toHaveBeenCalledWith(
+				expect.stringContaining("threshold-profiles/profile-to-remove"),
+			);
+			expect(loggerModule.success).toHaveBeenCalledWith(
+				"Threshold profile profile-to-remove deleted",
+			);
+		});
+
+		it("exits with error when no profile ID provided", async () => {
+			const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+				throw new Error("process.exit");
+			}) as never);
+
+			await expect(thresholdProfiles(["delete"])).rejects.toThrow("process.exit");
+			expect(loggerModule.error).toHaveBeenCalledWith(
+				"Threshold profile ID is required: framedash threshold-profiles delete <profile-id>",
+			);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+
+			exitSpy.mockRestore();
+		});
+	});
+
 	describe("subcommand dispatch", () => {
 		it("shows help when no subcommand given", async () => {
 			await thresholdProfiles([]);

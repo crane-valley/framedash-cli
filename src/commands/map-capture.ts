@@ -34,6 +34,9 @@ Upload options (all required together):
 Optional:
   --base-url <url>       API base URL (default: https://app.framedash.dev)
   --dry-run              Validate files without uploading
+  --metadata-pattern <glob>
+                         Only read matching JSON filenames (for example,
+                         '*.capture.json'). Supports * and ? wildcards.
 
 Examples:
   # Validate metadata files only
@@ -53,6 +56,7 @@ export async function mapCaptureCommand(args: string[]): Promise<void> {
 			"api-key-file": { type: "string" },
 			"project-id": { type: "string" },
 			"base-url": { type: "string", default: "https://app.framedash.dev" },
+			"metadata-pattern": { type: "string" },
 			upload: { type: "boolean", default: false },
 			"dry-run": { type: "boolean", default: false },
 			help: { type: "boolean", short: "h", default: false },
@@ -77,6 +81,7 @@ export async function mapCaptureCommand(args: string[]): Promise<void> {
 		credential: willUpload ? resolveUploadCredential(values, baseUrl) : undefined,
 		projectId: values["project-id"] ?? process.env.FRAMEDASH_PROJECT_ID,
 		baseUrl,
+		metadataPattern: values["metadata-pattern"],
 	});
 	if (!result.ok) {
 		process.exit(1);
@@ -116,6 +121,7 @@ export type MapCaptureOptions = {
 	credential: UploadCredential | undefined;
 	projectId: string | undefined;
 	baseUrl: string | undefined;
+	metadataPattern: string | undefined;
 };
 
 export type MapCaptureResult = {
@@ -164,10 +170,15 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 	}
 
 	const files = await readdir(resolvedDir);
-	const jsonFiles = files.filter((f) => f.endsWith(".json"));
+	const jsonFiles = files.filter(
+		(f) => f.toLowerCase().endsWith(".json") && matchesFilenamePattern(f, opts.metadataPattern),
+	);
 
 	if (jsonFiles.length === 0) {
-		error(`No JSON metadata files found in ${resolvedDir}`);
+		const qualifier = opts.metadataPattern
+			? ` matching ${JSON.stringify(opts.metadataPattern)}`
+			: "";
+		error(`No JSON metadata files${qualifier} found in ${resolvedDir}`);
 		return fail;
 	}
 
@@ -193,7 +204,10 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 			const result = mapCaptureMetadataSchema.safeParse(parsed);
 			if (!result.success) {
 				const issues = result.error.issues.map((i) => i.message).join("; ");
-				error(`${jsonFile}: Invalid metadata \u2014 ${issues}`);
+				const isolationHint = opts.metadataPattern
+					? ""
+					: " Use --metadata-pattern '*.capture.json' to ignore unrelated JSON files.";
+				error(`${jsonFile}: Invalid metadata \u2014 ${issues}.${isolationHint}`);
 				errorCount++;
 				continue;
 			}
@@ -270,4 +284,15 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 	log("");
 	log(`Done: ${successCount} succeeded, ${errorCount} failed`);
 	return { ok: errorCount === 0, successCount, errorCount };
+}
+
+function matchesFilenamePattern(filename: string, pattern: string | undefined): boolean {
+	if (!pattern) return true;
+	let source = "";
+	for (const char of pattern) {
+		if (char === "*") source += ".*";
+		else if (char === "?") source += ".";
+		else source += char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+	}
+	return new RegExp(`^${source}$`, "i").test(filename);
 }

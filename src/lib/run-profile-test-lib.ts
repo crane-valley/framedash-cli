@@ -308,6 +308,8 @@ export interface WaitForIngestDeps {
 	now: () => number;
 	/** Optional per-attempt hook (for progress logging). */
 	onPoll?: (attempt: number) => void;
+	/** Optional hook for a failed poll that will be retried. */
+	onPollError?: (error: unknown, attempt: number) => void;
 }
 
 /**
@@ -326,7 +328,8 @@ export async function waitForIngest(deps: WaitForIngestDeps): Promise<boolean> {
 		try {
 			const builds = await deps.fetchBuilds();
 			if (hasIngestedBuild(builds, deps.buildId, deps.minEventCount ?? 0)) return true;
-		} catch {
+		} catch (error) {
+			deps.onPollError?.(error, attempt);
 			// Transient ingest / aggregation lag -- keep polling until the deadline.
 		}
 		// Read the clock once so the deadline check and the sleep window are

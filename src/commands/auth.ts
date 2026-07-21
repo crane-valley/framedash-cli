@@ -44,5 +44,6 @@ Options:
   --api-key <key>        API key (or FRAMEDASH_API_KEY env)
   --api-key-file <path>  Read the API key from a file ('-' for stdin)
   --base-url <url>       API base URL (default: https://app.framedash.dev)
-  --format <fmt>         Output format: json, table, csv (default: json)
+  --format <fmt>         Output format: json, table, csv (default: json).
+                         JSON mode keeps stdout machine-readable; status goes to stderr.
   -h, --help             Show help`;

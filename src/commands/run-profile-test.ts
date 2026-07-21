@@ -365,6 +365,7 @@ async function awaitIngest(
 	intervalMs: number,
 ): Promise<void> {
 	success(`Waiting up to ${timeoutMs / 1000}s for build '${buildId}' to ingest...`);
+	let reportedPollError = false;
 	const landed = await waitForIngest({
 		buildId,
 		minEventCount: priorEventCount,
@@ -373,6 +374,14 @@ async function awaitIngest(
 		now: () => Date.now(),
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 		fetchBuilds: () => fetchBuilds(client, values, buildId),
+		onPollError: (pollError, attempt) => {
+			if (reportedPollError) return;
+			reportedPollError = true;
+			warn(
+				`Ingest poll attempt ${attempt} failed (${pollError instanceof Error ? pollError.message : String(pollError)}); ` +
+					"retrying until the ingest timeout.",
+			);
+		},
 	});
 	if (!landed) {
 		error(
