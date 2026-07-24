@@ -122,20 +122,18 @@ export async function login(args: string[]): Promise<void> {
 		}
 		success("Waiting for the browser sign-in to complete (5 minute timeout)...");
 
-		const { code } = await server.waitForCallback(CALLBACK_TIMEOUT_MS);
+		const { code, redirectUri } = await server.waitForCallback(CALLBACK_TIMEOUT_MS);
 		let tokens: Awaited<ReturnType<typeof exchangeAuthorizationCode>>;
 		try {
 			tokens = await exchangeAuthorizationCode(baseUrl, {
 				code,
 				codeVerifier,
-				redirectUri: server.redirectUri,
+				redirectUri,
 			});
 		} catch (err) {
-			// A redirect_uri-mismatch invalid_grant almost always means the authorize
-			// URL was altered before it opened (a proxy or the user swapping 127.0.0.1
-			// for localhost), so the code was minted against a different host than the
-			// exchange presents. Print the raw error FIRST, then the concrete fix, so
-			// the ordering is not left to the top-level catch in index.ts.
+			// The two registered loopback hostnames are normalized by the receiver.
+			// A remaining mismatch therefore points to a changed path/port or proxy.
+			// Print the raw error FIRST so the top-level catch cannot reorder it.
 			if (
 				err instanceof OAuthTokenRequestError &&
 				err.code === "invalid_grant" &&
@@ -143,9 +141,8 @@ export async function login(args: string[]): Promise<void> {
 			) {
 				error(err.message);
 				error(
-					"This is a redirect_uri mismatch. Re-run 'framedash login' and open the printed " +
-						"authorization URL EXACTLY as-is -- do not substitute localhost for 127.0.0.1 " +
-						"(or vice versa) or route it through a proxy.",
+					"This is a redirect_uri mismatch. Re-run 'framedash login' without changing the " +
+						"callback path or port, and do not route the authorization URL through a proxy.",
 				);
 				// Signal failure via the exit code and unwind through `finally` so the
 				// loopback server is closed before the process exits -- a direct

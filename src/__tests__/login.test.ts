@@ -49,7 +49,10 @@ function fakeServer(): FakeServer {
 	return {
 		port: 49152,
 		redirectUri: "http://127.0.0.1:49152/callback",
-		waitForCallback: vi.fn().mockResolvedValue({ code: "fdac_test_code" }),
+		waitForCallback: vi.fn().mockResolvedValue({
+			code: "fdac_test_code",
+			redirectUri: "http://127.0.0.1:49152/callback",
+		}),
 		close: vi.fn().mockResolvedValue(undefined),
 	};
 }
@@ -140,6 +143,27 @@ describe("login command", () => {
 			}),
 		);
 		expect(server.close).toHaveBeenCalled();
+	});
+
+	it("exchanges with the effective callback URI when the browser substitutes localhost", async () => {
+		const server = fakeServer();
+		server.waitForCallback.mockResolvedValue({
+			code: "fdac_test_code",
+			redirectUri: "http://localhost:49152/callback",
+		});
+		vi.mocked(startLoopbackServer).mockResolvedValue(server as never);
+
+		await login(["--no-browser"]);
+
+		expect(authorizeUrlFromLogs().searchParams.get("redirect_uri")).toBe(
+			"http://127.0.0.1:49152/callback",
+		);
+		expect(vi.mocked(exchangeAuthorizationCode).mock.calls[0]?.[1]).toEqual(
+			expect.objectContaining({
+				code: "fdac_test_code",
+				redirectUri: "http://localhost:49152/callback",
+			}),
+		);
 	});
 
 	it("never prints token values", async () => {
@@ -281,7 +305,7 @@ describe("login command", () => {
 			const errors = vi.mocked(loggerModule.error).mock.calls.map((c) => String(c[0]));
 			// Raw server error FIRST, then the actionable fix.
 			expect(errors[0]).toContain("redirect_uri");
-			expect(errors[1]).toContain("EXACTLY as-is");
+			expect(errors[1]).toContain("callback path or port");
 			expect(saveStoredEntry).not.toHaveBeenCalled();
 			// The loopback server must be closed before the process exits.
 			expect(server.close).toHaveBeenCalled();

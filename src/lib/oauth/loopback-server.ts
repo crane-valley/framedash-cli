@@ -1,13 +1,19 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { warn } from "../logger.js";
 
-// The loopback redirect_uri is registered with THIS host. Per RFC 6749
-// section 4.1.3 the AS mints the code against whatever redirect host the
-// browser actually hit and requires an exact match at token exchange, so a
-// proxy or a hand-edited authorize URL that swaps 127.0.0.1 for localhost (or
-// vice versa) binds the code to the other host and the exchange then fails
-// invalid_grant. Keep this fixed and warn when the callback lands elsewhere.
-const REDIRECT_HOST = "127.0.0.1";
+const BIND_HOST = "127.0.0.1";
+const LOOPBACK_REDIRECT_HOSTS = new Set([BIND_HOST, "localhost"]);
+
+/**
+ * Windows URL handlers can normalize the loopback host to localhost before
+ * the authorization page opens. Starting with that host keeps the authorize
+ * request, browser callback, and token exchange byte-identical. Other platforms
+ * retain the literal IPv4 address and avoid localhost IPv6 resolution differences.
+ */
+export function redirectHostForPlatform(
+	platform: NodeJS.Platform = process.platform,
+): "127.0.0.1" | "localhost" {
+	return platform === "win32" ? "localhost" : BIND_HOST;
+}
 
 // RFC 8252 section 7.3 loopback redirect receiver for `framedash login`.
 //
@@ -65,32 +71,32 @@ function sanitizeForTerminal(value: string): string {
 }
 
 /**
- * Warning text when a /callback request lands on a host other than the one the
- * redirect_uri was registered with (the authorization URL was altered before it
- * opened), or null when the host matches. Pure so the comparison is unit-testable
- * without a live server; the handler decides whether to emit it.
+ * Only the two registered loopback names and the listener's actual ephemeral
+ * port may influence the redirect URI sent to the token endpoint.
  */
-export function callbackHostMismatchWarning(
+export function callbackRedirectUri(
 	hostHeader: string | undefined,
-	expectedHost: string = REDIRECT_HOST,
+	expectedPort: number,
 ): string | null {
 	if (!hostHeader) return null;
-	let hostname: string;
+	let authority: URL;
 	try {
-		// Wrap in a scheme so URL parses a bare "host:port" authority.
-		hostname = new URL(`http://${hostHeader}`).hostname;
+		authority = new URL(`http://${hostHeader}`);
 	} catch {
 		return null;
 	}
-	if (hostname === expectedHost) return null;
-	return (
-		`The sign-in callback arrived on host '${hostname}', but the authorization URL ` +
-		`was issued for '${expectedHost}'. The authorization URL appears to have been ` +
-		`altered (e.g. '${expectedHost}' rewritten to '${hostname}'), so token exchange ` +
-		`will fail with a redirect_uri mismatch. Re-run 'framedash login' and open the ` +
-		`printed URL EXACTLY as-is -- do not substitute localhost for ${expectedHost} or ` +
-		`vice versa.`
-	);
+	if (
+		authority.username !== "" ||
+		authority.password !== "" ||
+		authority.pathname !== "/" ||
+		authority.search !== "" ||
+		authority.hash !== "" ||
+		!LOOPBACK_REDIRECT_HOSTS.has(authority.hostname) ||
+		authority.port !== String(expectedPort)
+	) {
+		return null;
+	}
+	return `http://${authority.hostname}:${expectedPort}/callback`;
 }
 
 export type LoopbackServer = {
@@ -99,7 +105,7 @@ export type LoopbackServer = {
 	/** The exact redirect URI to register in the authorize request. */
 	redirectUri: string;
 	/** Resolve with the authorization code, or reject on error/timeout. */
-	waitForCallback: (timeoutMs: number) => Promise<{ code: string }>;
+	waitForCallback: (timeoutMs: number) => Promise<{ code: string; redirectUri: string }>;
 	close: () => Promise<void>;
 };
 
@@ -110,9 +116,11 @@ export type LoopbackServer = {
  */
 export function startLoopbackServer(expectedState: string): Promise<LoopbackServer> {
 	let settled = false;
-	let resolveCallback: (value: { code: string }) => void = () => {};
+	let boundPort: number | null = null;
+	const redirectHost = redirectHostForPlatform();
+	let resolveCallback: (value: { code: string; redirectUri: string }) => void = () => {};
 	let rejectCallback: (reason: Error) => void = () => {};
-	const callbackPromise = new Promise<{ code: string }>((resolve, reject) => {
+	const callbackPromise = new Promise<{ code: string; redirectUri: string }>((resolve, reject) => {
 		resolveCallback = resolve;
 		rejectCallback = reject;
 	});
@@ -120,7 +128,7 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 	// before waitForCallback is called) must not crash the process.
 	callbackPromise.catch(() => {});
 
-	const settle = (outcome: { code: string } | Error): void => {
+	const settle = (outcome: { code: string; redirectUri: string } | Error): void => {
 		if (settled) return;
 		settled = true;
 		if (outcome instanceof Error) {
@@ -179,15 +187,17 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 			return;
 		}
 
-		// A valid code arrived on an unexpected host: the exchange will fail exact
-		// redirect_uri match, so warn now with the fix rather than let it surface
-		// only as an opaque invalid_grant later.
-		const mismatch = callbackHostMismatchWarning(req.headers.host);
-		if (mismatch) warn(mismatch);
+		const effectiveRedirectUri =
+			boundPort === null ? null : callbackRedirectUri(req.headers.host, boundPort);
+		if (effectiveRedirectUri === null) {
+			res.writeHead(400, HTML_HEADERS);
+			res.end(page("Unexpected request", "This request did not match the loopback listener."));
+			return;
+		}
 
 		res.writeHead(200, HTML_HEADERS);
 		res.end(SUCCESS_PAGE);
-		settle({ code });
+		settle({ code, redirectUri: effectiveRedirectUri });
 	});
 
 	// Refuse to linger: once the single callback settles the login, keep-alive
@@ -197,7 +207,7 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 	return new Promise<LoopbackServer>((resolve, reject) => {
 		server.once("error", reject);
 		// STRICT loopback bind: 127.0.0.1 only (never 0.0.0.0/::), ephemeral port.
-		server.listen({ host: REDIRECT_HOST, port: 0, exclusive: true }, () => {
+		server.listen({ host: BIND_HOST, port: 0, exclusive: true }, () => {
 			const address = server.address();
 			if (address === null || typeof address === "string") {
 				reject(new Error("Loopback server failed to report a bound port"));
@@ -205,11 +215,12 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 				return;
 			}
 			const port = address.port;
+			boundPort = port;
 			resolve({
 				port,
-				redirectUri: `http://${REDIRECT_HOST}:${port}/callback`,
+				redirectUri: `http://${redirectHost}:${port}/callback`,
 				waitForCallback: (timeoutMs: number) => {
-					return new Promise<{ code: string }>((resolveWait, rejectWait) => {
+					return new Promise<{ code: string; redirectUri: string }>((resolveWait, rejectWait) => {
 						const timer = setTimeout(() => {
 							settle(
 								new Error(

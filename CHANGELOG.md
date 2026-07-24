@@ -6,6 +6,18 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-07-23
+
+### Fixed
+
+- `framedash login`: keep the loopback redirect URI stable on Windows by
+  starting the authorization flow with `localhost`; Linux and macOS retain
+  `127.0.0.1`. The callback receiver still binds strictly to IPv4 loopback,
+  validates the registered loopback host and exact ephemeral port, and now
+  passes the effective callback URI to the token exchange. This prevents
+  Windows URL-handler normalization from producing
+  `invalid_grant: redirect_uri does not match`.
+
 ## [0.1.8] - 2026-07-22
 
 ### Added
