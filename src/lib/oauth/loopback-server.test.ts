@@ -1,8 +1,9 @@
 import { get as httpGet } from "node:http";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-	callbackHostMismatchWarning,
+	callbackRedirectUri,
 	OAuthCallbackError,
+	redirectHostForPlatform,
 	startLoopbackServer,
 } from "./loopback-server.js";
 
@@ -23,13 +24,33 @@ async function withServer(
 	}
 }
 
+async function getWithHost(port: number, path: string, hostHeader: string): Promise<number> {
+	return new Promise<number>((resolve, reject) => {
+		const req = httpGet(
+			{
+				host: "127.0.0.1",
+				port,
+				path,
+				headers: { Host: hostHeader },
+			},
+			(res) => {
+				res.resume();
+				res.on("end", () => resolve(res.statusCode ?? 0));
+			},
+		);
+		req.on("error", reject);
+	});
+}
+
 describe("startLoopbackServer", () => {
-	it("binds to 127.0.0.1 on an ephemeral port with a /callback redirect URI", async () => {
+	it("binds to IPv4 loopback with a platform-stable /callback redirect URI", async () => {
 		await withServer(async (server) => {
 			expect(server.port).toBeGreaterThan(0);
-			expect(server.redirectUri).toBe(`http://127.0.0.1:${server.port}/callback`);
+			expect(server.redirectUri).toBe(
+				`http://${redirectHostForPlatform()}:${server.port}/callback`,
+			);
 			// The URI the AS redirects to must resolve on loopback.
-			const res = await fetch(`http://127.0.0.1:${server.port}/other`);
+			const res = await fetch(`${server.redirectUri.replace("/callback", "/other")}`);
 			expect(res.status).toBe(404);
 		});
 	});
@@ -45,7 +66,10 @@ describe("startLoopbackServer", () => {
 			expect(body).toContain("close this tab");
 			// The response page must not echo the authorization code.
 			expect(body).not.toContain("fdac_test_code");
-			await expect(wait).resolves.toEqual({ code: "fdac_test_code" });
+			await expect(wait).resolves.toEqual({
+				code: "fdac_test_code",
+				redirectUri: server.redirectUri,
+			});
 		});
 	});
 
@@ -64,7 +88,7 @@ describe("startLoopbackServer", () => {
 			expect(outcome).toBe("still-pending");
 			// ...and the legitimate callback still completes it.
 			await fetch(`${server.redirectUri}?code=fdac_real&state=${encodeURIComponent(STATE)}`);
-			await expect(wait).resolves.toEqual({ code: "fdac_real" });
+			await expect(wait).resolves.toEqual({ code: "fdac_real", redirectUri: server.redirectUri });
 		});
 	});
 
@@ -74,7 +98,7 @@ describe("startLoopbackServer", () => {
 			const res = await fetch(`${server.redirectUri}?code=fdac_forged`);
 			expect(res.status).toBe(400);
 			await fetch(`${server.redirectUri}?code=fdac_real&state=${encodeURIComponent(STATE)}`);
-			await expect(wait).resolves.toEqual({ code: "fdac_real" });
+			await expect(wait).resolves.toEqual({ code: "fdac_real", redirectUri: server.redirectUri });
 		});
 	});
 
@@ -141,7 +165,7 @@ describe("startLoopbackServer", () => {
 				`${server.redirectUri}?code=second&state=${encodeURIComponent(STATE)}`,
 			);
 			expect(second.status).toBe(200);
-			await expect(wait).resolves.toEqual({ code: "first" });
+			await expect(wait).resolves.toEqual({ code: "first", redirectUri: server.redirectUri });
 		});
 	});
 
@@ -151,52 +175,68 @@ describe("startLoopbackServer", () => {
 		});
 	});
 
-	it("warns to stderr when a valid code arrives on an altered host", async () => {
+	it("returns the effective localhost redirect URI when the browser substitutes the host", async () => {
 		await withServer(async (server) => {
-			const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 			const wait = server.waitForCallback(5000);
 			// fetch cannot set the forbidden Host header; use node:http to spoof a
-			// callback that came in on 'localhost' (an altered authorize URL) while
-			// still connecting to the real 127.0.0.1 loopback port.
-			await new Promise<void>((resolve, reject) => {
-				const req = httpGet(
-					{
-						host: "127.0.0.1",
-						port: server.port,
-						path: `/callback?code=fdac_real&state=${encodeURIComponent(STATE)}`,
-						headers: { Host: `localhost:${server.port}` },
-					},
-					(res) => {
-						res.resume();
-						res.on("end", () => resolve());
-					},
-				);
-				req.on("error", reject);
+			// callback whose effective redirect URI was normalized by the opener.
+			const status = await getWithHost(
+				server.port,
+				`/callback?code=fdac_real&state=${encodeURIComponent(STATE)}`,
+				`localhost:${server.port}`,
+			);
+			expect(status).toBe(200);
+			await expect(wait).resolves.toEqual({
+				code: "fdac_real",
+				redirectUri: `http://localhost:${server.port}/callback`,
 			});
-			await expect(wait).resolves.toEqual({ code: "fdac_real" });
-			const written = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
-			expect(written).toContain("altered");
-			expect(written).toContain("EXACTLY as-is");
-			stderrSpy.mockRestore();
+		});
+	});
+
+	it("keeps waiting after a valid-state callback uses an unregistered host", async () => {
+		await withServer(async (server) => {
+			const wait = server.waitForCallback(5000);
+			const status = await getWithHost(
+				server.port,
+				`/callback?code=fdac_forged&state=${encodeURIComponent(STATE)}`,
+				`example.com:${server.port}`,
+			);
+			expect(status).toBe(400);
+			const outcome = await Promise.race([
+				wait,
+				new Promise((resolve) => setTimeout(resolve, 150, "still-pending")),
+			]);
+			expect(outcome).toBe("still-pending");
+
+			await fetch(`${server.redirectUri}?code=fdac_real&state=${encodeURIComponent(STATE)}`);
+			await expect(wait).resolves.toEqual({
+				code: "fdac_real",
+				redirectUri: server.redirectUri,
+			});
 		});
 	});
 });
 
-describe("callbackHostMismatchWarning", () => {
-	it("returns null when the callback host matches the redirect host", () => {
-		expect(callbackHostMismatchWarning("127.0.0.1:49152")).toBeNull();
+describe("redirectHostForPlatform", () => {
+	it("uses localhost on Windows", () => {
+		expect(redirectHostForPlatform("win32")).toBe("localhost");
 	});
 
-	it("warns when localhost was substituted for 127.0.0.1", () => {
-		const msg = callbackHostMismatchWarning("localhost:49152");
-		expect(msg).not.toBeNull();
-		expect(msg).toContain("altered");
-		expect(msg).toContain("127.0.0.1");
-		expect(msg).toContain("EXACTLY as-is");
+	it.each(["linux", "darwin"] as const)("retains IPv4 loopback on %s", (platform) => {
+		expect(redirectHostForPlatform(platform)).toBe("127.0.0.1");
+	});
+});
+
+describe("callbackRedirectUri", () => {
+	it.each(["127.0.0.1", "localhost"])("accepts registered loopback host %s", (host) => {
+		expect(callbackRedirectUri(`${host}:49152`, 49152)).toBe(`http://${host}:49152/callback`);
 	});
 
-	it("returns null for a missing or empty host header", () => {
-		expect(callbackHostMismatchWarning(undefined)).toBeNull();
-		expect(callbackHostMismatchWarning("")).toBeNull();
+	it("rejects missing, foreign, or wrong-port callback hosts", () => {
+		expect(callbackRedirectUri(undefined, 49152)).toBeNull();
+		expect(callbackRedirectUri("example.com:49152", 49152)).toBeNull();
+		expect(callbackRedirectUri("localhost:49153", 49152)).toBeNull();
+		expect(callbackRedirectUri("user@localhost:49152", 49152)).toBeNull();
+		expect(callbackRedirectUri("localhost:49152/path", 49152)).toBeNull();
 	});
 });

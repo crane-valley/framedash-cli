@@ -39,8 +39,9 @@ Two credential types are supported:
   `--api-key` for local runs so raw keys do not appear in shell history.
 - Interactive browser login: `framedash login` runs an OAuth 2.1
   authorization-code + PKCE flow against the Framedash authorization server
-  (loopback redirect on `127.0.0.1`). Tokens are stored per base-URL origin in
-  `$XDG_CONFIG_HOME/framedash/credentials.json` (default
+  (loopback redirect on `localhost` for Windows and `127.0.0.1` for Linux/macOS;
+  the listener binds strictly to IPv4 loopback). Tokens are stored per base-URL
+  origin in `$XDG_CONFIG_HOME/framedash/credentials.json` (default
   `~/.config/framedash/credentials.json`; the same `~/.config` path is used on
   Windows) and refreshed automatically, including refresh-token rotation.
   `framedash logout` revokes the session server-side (best effort) and removes
