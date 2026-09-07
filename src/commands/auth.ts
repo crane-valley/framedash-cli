@@ -3,10 +3,6 @@ import { formatOutput } from "../lib/formatters.js";
 import { log, success } from "../lib/logger.js";
 import { runCommand } from "../lib/run-command.js";
 
-/**
- * Human-readable description of the active credential source. For a stored
- * OAuth login this shows scope and expiry ONLY -- never token material.
- */
 function describeCredential(credential: CliCredential): string {
 	if (credential.kind === "api-key") {
 		switch (credential.source) {

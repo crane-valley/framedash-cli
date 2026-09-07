@@ -15,19 +15,14 @@ export function redirectHostForPlatform(
 	return platform === "win32" ? "localhost" : BIND_HOST;
 }
 
-// RFC 8252 section 7.3 loopback redirect receiver for `framedash login`.
-//
-// SECURITY invariants:
-//  - Binds STRICTLY to 127.0.0.1 (never 0.0.0.0 / ::) on an ephemeral port,
-//    so nothing off-host can reach the callback.
-//  - The `state` parameter is validated FIRST, for success AND error
-//    callbacks alike, BEFORE the caller ever sees a code. A mismatched or
-//    missing state does NOT settle the login: the request gets a generic
-//    400 and the flow keeps waiting for the legitimate callback -- a forged
-//    local request can neither abort nor complete a pending sign-in, and
-//    any accompanying code is discarded (no token exchange happens).
-//  - Responses to the browser are static HTML with no token/code material,
-//    and nothing from the callback URL is reflected into the page.
+// SECURITY invariants:  - Binds STRICTLY to 127.0.0.1 (never 0.0.0.0 / ::) on an ephemeral
+// port,    so nothing off-host can reach the callback.  - The `state` parameter is validated
+// FIRST, for success AND error    callbacks alike, BEFORE the caller ever sees a code. A
+// mismatched or    missing state does NOT settle the login: the request gets a generic    400
+// and the flow keeps waiting for the legitimate callback -- a forged    local request can
+// neither abort nor complete a pending sign-in, and    any accompanying code is discarded (no
+// token exchange happens).  - Responses to the browser are static HTML with no token/code
+// material,    and nothing from the callback URL is reflected into the page.
 
 const HTML_HEADERS = {
 	"Content-Type": "text/html; charset=utf-8",
@@ -70,10 +65,6 @@ function sanitizeForTerminal(value: string): string {
 	return value.replace(/[^a-zA-Z0-9 _.,:;/'()-]/g, "").slice(0, 200);
 }
 
-/**
- * Only the two registered loopback names and the listener's actual ephemeral
- * port may influence the redirect URI sent to the token endpoint.
- */
 export function callbackRedirectUri(
 	hostHeader: string | undefined,
 	expectedPort: number,
@@ -102,18 +93,11 @@ export function callbackRedirectUri(
 export type LoopbackServer = {
 	/** The ephemeral port actually bound on 127.0.0.1. */
 	port: number;
-	/** The exact redirect URI to register in the authorize request. */
 	redirectUri: string;
-	/** Resolve with the authorization code, or reject on error/timeout. */
 	waitForCallback: (timeoutMs: number) => Promise<{ code: string; redirectUri: string }>;
 	close: () => Promise<void>;
 };
 
-/**
- * Start the loopback callback receiver. `expectedState` is the CSRF state
- * minted for this login attempt; only a /callback request carrying exactly
- * that state can complete the flow.
- */
 export function startLoopbackServer(expectedState: string): Promise<LoopbackServer> {
 	let settled = false;
 	let boundPort: number | null = null;
@@ -206,7 +190,6 @@ export function startLoopbackServer(expectedState: string): Promise<LoopbackServ
 
 	return new Promise<LoopbackServer>((resolve, reject) => {
 		server.once("error", reject);
-		// STRICT loopback bind: 127.0.0.1 only (never 0.0.0.0/::), ephemeral port.
 		server.listen({ host: BIND_HOST, port: 0, exclusive: true }, () => {
 			const address = server.address();
 			if (address === null || typeof address === "string") {

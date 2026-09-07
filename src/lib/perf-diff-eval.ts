@@ -8,7 +8,7 @@
 /**
  * Lower-is-better performance metrics perf-diff can gate on. Mirrors the web
  * app's RegressionMetric registry (apps/web .../regression-types.ts): the core
- * three fixed perf fields, the disk io.* metrics carried in the events_v2 metrics
+ * three fixed perf fields, the disk io.* metrics carried in the events metrics
  * map on perf_heartbeat, load_time_ms carried in the metrics map on map_load
  * events, and mem.vram carried in the metrics map on perf_heartbeat AND
  * position-qualified player events (so it is map-filterable). Each NEW metric is
@@ -60,12 +60,10 @@ export function loadTimeMapConflict(
 	return null;
 }
 
-/** One metric's diff, as returned by the builds/compare API. */
 export interface ApiMetricDiff {
 	metric: RegressionMetric;
 	baselineP50: number | null;
 	candidateP50: number | null;
-	/** Signed percent change of candidate P50 vs baseline P50; null = not comparable. */
 	diffPct: number | null;
 	isRegression: boolean;
 	baselineTail: number | null;
@@ -79,16 +77,12 @@ export interface ApiBuildComparison {
 }
 
 export interface RegressionVerdict {
-	/** True when at least one evaluated metric regressed beyond the threshold. */
 	failed: boolean;
-	/** Metrics that regressed beyond the threshold. */
 	offenders: ApiMetricDiff[];
-	/** Metrics actually evaluated (matching the metric filter, with comparable data). */
 	evaluated: ApiMetricDiff[];
 }
 
 export interface EvaluateOptions {
-	/** Restrict the gate to a single metric; default checks all. */
 	metric?: RegressionMetric;
 	/**
 	 * A metric fails only when its P50 worsened by MORE than this percentage,
@@ -166,7 +160,6 @@ export function evaluateRegression(
 	return { failed: offenders.length > 0, offenders, evaluated };
 }
 
-/** A one-line human summary of a single metric diff (for CI logs). */
 export function formatMetricDiff(d: ApiMetricDiff): string {
 	// `typeof !== "number"` covers a null OR an undefined/missing diffPct, so the
 	// toFixed() below can never throw on a malformed row.

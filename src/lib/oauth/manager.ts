@@ -6,18 +6,12 @@ import {
 	saveStoredEntry,
 } from "./token-store.js";
 
-// In-process lifecycle for one origin's stored OAuth credentials: hands out
-// the access token, refreshes proactively near expiry (and on demand after a
-// 401), and persists rotated refresh tokens atomically via the token store.
-//
-// Concurrency: refreshes are coalesced IN-PROCESS (one request per manager,
-// and create-client shares one manager per origin). Across processes the
-// store is last-writer-wins with no locking; a concurrent same-origin
-// refresh can race rotation, whose worst case is the server's reuse
-// revocation surfacing as the ordinary invalid_grant re-login path below.
-// See token-store.ts for the full concurrency-model note.
+// Concurrency: refreshes are coalesced IN-PROCESS (one request per manager, and create-client
+// shares one manager per origin). Across processes the store is last-writer-wins with no
+// locking; a concurrent same-origin refresh can race rotation, whose worst case is the server's
+// reuse revocation surfacing as the ordinary invalid_grant re-login path below. See
+// token-store.ts for the full concurrency-model note.
 
-/** Refresh when the access token expires within this window. */
 const EXPIRY_SKEW_MS = 60_000;
 
 /**
@@ -48,12 +42,10 @@ export class OAuthTokenManager {
 		this.entry = entry;
 	}
 
-	/** Space-delimited granted scopes (safe to display). */
 	get scope(): string {
 		return this.entry.scope;
 	}
 
-	/** Access-token expiry, epoch ms (safe to display). */
 	get expiresAt(): number {
 		return this.entry.expires_at;
 	}
@@ -74,7 +66,6 @@ export class OAuthTokenManager {
 		return this.refresh();
 	}
 
-	/** Coalesce concurrent callers onto a single refresh request. */
 	private refresh(): Promise<string> {
 		if (this.refreshPromise === null) {
 			this.refreshPromise = this.doRefresh().finally(() => {
@@ -84,10 +75,6 @@ export class OAuthTokenManager {
 		return this.refreshPromise;
 	}
 
-	/**
-	 * Refresh with the CURRENT stored token, then persist the rotated pair
-	 * (atomic write, last-writer-wins).
-	 */
 	private async doRefresh(): Promise<string> {
 		// Re-read first: another process may have rotated since this manager
 		// loaded. Presenting an already-rotated token would trip the server's
@@ -102,10 +89,8 @@ export class OAuthTokenManager {
 		if (stored.access_token !== this.entry.access_token) {
 			this.entry = stored;
 			if (stored.expires_at - Date.now() > EXPIRY_SKEW_MS) {
-				// Another process's access token is still fresh: no refresh needed.
 				return stored.access_token;
 			}
-			// Fall through and refresh with the reloaded (current) refresh token.
 		}
 
 		let entry: StoredTokenEntry;

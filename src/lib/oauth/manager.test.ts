@@ -79,7 +79,6 @@ describe("OAuthTokenManager", () => {
 		await expect(manager.getAccessToken()).resolves.toBe("fdat_local_new");
 
 		expect(refreshTokenGrant).toHaveBeenCalledWith(BASE_URL, "fdrt_local_current");
-		// The ROTATED refresh token must be on disk (the old one is dead server-side).
 		expect(readStoredEntry(ORIGIN)?.refresh_token).toBe("fdrt_local_rotated");
 	});
 
@@ -161,7 +160,6 @@ describe("OAuthTokenManager", () => {
 	});
 
 	it("adopts credentials rotated by another process instead of presenting a stale refresh token", async () => {
-		// Simulate: another process rotated and saved before our refresh ran.
 		const rotated = entry({
 			access_token: "fdat_local_other_process",
 			refresh_token: "fdrt_local_other_process",
@@ -180,7 +178,7 @@ describe("OAuthTokenManager", () => {
 			entry({
 				access_token: "fdat_local_other_process",
 				refresh_token: "fdrt_local_other_process",
-				expires_at: Date.now() + 10_000, // inside the 60s skew window
+				expires_at: Date.now() + 10_000,
 			}),
 		);
 		vi.mocked(refreshTokenGrant).mockResolvedValue({
@@ -197,8 +195,6 @@ describe("OAuthTokenManager", () => {
 	});
 
 	it("treats a missing stored entry as logged out (no request, no resave)", async () => {
-		// The manager loaded credentials at startup, but a logout completed
-		// before the refresh: the store no longer has the entry.
 		const manager = new OAuthTokenManager(BASE_URL, ORIGIN, entry({ expires_at: Date.now() }));
 
 		await expect(manager.getAccessToken()).rejects.toBeInstanceOf(OAuthLoginRequiredError);
@@ -215,8 +211,6 @@ describe("OAuthTokenManager", () => {
 			expires_in: 3600,
 			scope: "analytics:read",
 		});
-		// The refresh succeeded (old refresh token consumed server-side) but
-		// the local persist fails.
 		vi.mocked(saveStoredEntry).mockRejectedValueOnce(new Error("ENOSPC: disk full"));
 		const manager = new OAuthTokenManager(BASE_URL, ORIGIN, entry({ expires_at: Date.now() }));
 

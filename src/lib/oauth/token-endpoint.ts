@@ -10,16 +10,12 @@ import type { StoredTokenEntry } from "./token-store.js";
 // never include request parameters (which contain tokens) -- only the
 // server's error code/description and the HTTP status.
 
-/** Well-known client_id of the seeded first-party CLI client. */
 export const CLI_OAUTH_CLIENT_ID = "fdc_framedash_cli";
 
-/** Per-request timeout for token/revocation calls. */
 export const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 
-/** Structured OAuth error (RFC 6749 section 5.2) from the token endpoint. */
 export class OAuthTokenRequestError extends Error {
 	constructor(
-		/** Machine-readable error code, e.g. "invalid_grant". */
 		public readonly code: string,
 		description: string,
 		public readonly status: number,
@@ -32,15 +28,11 @@ export class OAuthTokenRequestError extends Error {
 export type TokenResponse = {
 	access_token: string;
 	refresh_token: string;
-	/** Access token lifetime in seconds. */
 	expires_in: number;
-	/** Space-delimited granted scopes. */
 	scope: string;
 };
 
 function endpointUrl(baseUrl: string, path: string): string {
-	// Origin-rooted: the AS serves its endpoints at the app origin regardless
-	// of any path on the configured base URL.
 	assertSafeBaseUrl(baseUrl);
 	return new URL(path, baseUrl).toString();
 }
@@ -97,7 +89,6 @@ async function requestToken(baseUrl: string, params: URLSearchParams): Promise<T
 	};
 }
 
-/** RFC 6749 section 4.1.3 authorization-code exchange with the PKCE verifier. */
 export async function exchangeAuthorizationCode(
 	baseUrl: string,
 	options: { code: string; codeVerifier: string; redirectUri: string },
@@ -111,7 +102,6 @@ export async function exchangeAuthorizationCode(
 	return requestToken(baseUrl, params);
 }
 
-/** RFC 6749 section 6 refresh grant (the server rotates the refresh token). */
 export async function refreshTokenGrant(
 	baseUrl: string,
 	refreshToken: string,
@@ -123,11 +113,6 @@ export async function refreshTokenGrant(
 	return requestToken(baseUrl, params);
 }
 
-/**
- * RFC 7009 revocation. Revoking the refresh token disconnects the whole
- * grant server-side. Throws on transport errors; callers treat revocation
- * as best effort (local credentials are removed regardless).
- */
 export async function revokeToken(baseUrl: string, token: string): Promise<void> {
 	const params = new URLSearchParams({ token, client_id: CLI_OAUTH_CLIENT_ID });
 	const response = await postForm(endpointUrl(baseUrl, "/api/oauth/revoke"), params);
@@ -136,7 +121,6 @@ export async function revokeToken(baseUrl: string, token: string): Promise<void>
 	}
 }
 
-/** Convert a token response into the persisted entry shape. */
 export function toStoredEntry(response: TokenResponse, now = Date.now()): StoredTokenEntry {
 	return {
 		access_token: response.access_token,

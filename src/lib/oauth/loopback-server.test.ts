@@ -49,7 +49,6 @@ describe("startLoopbackServer", () => {
 			expect(server.redirectUri).toBe(
 				`http://${redirectHostForPlatform()}:${server.port}/callback`,
 			);
-			// The URI the AS redirects to must resolve on loopback.
 			const res = await fetch(`${server.redirectUri.replace("/callback", "/other")}`);
 			expect(res.status).toBe(404);
 		});
@@ -64,7 +63,6 @@ describe("startLoopbackServer", () => {
 			expect(res.status).toBe(200);
 			const body = await res.text();
 			expect(body).toContain("close this tab");
-			// The response page must not echo the authorization code.
 			expect(body).not.toContain("fdac_test_code");
 			await expect(wait).resolves.toEqual({
 				code: "fdac_test_code",
@@ -86,7 +84,6 @@ describe("startLoopbackServer", () => {
 				new Promise((resolve) => setTimeout(resolve, 150, "still-pending")),
 			]);
 			expect(outcome).toBe("still-pending");
-			// ...and the legitimate callback still completes it.
 			await fetch(`${server.redirectUri}?code=fdac_real&state=${encodeURIComponent(STATE)}`);
 			await expect(wait).resolves.toEqual({ code: "fdac_real", redirectUri: server.redirectUri });
 		});
@@ -112,7 +109,6 @@ describe("startLoopbackServer", () => {
 				new Promise((resolve) => setTimeout(resolve, 150, "still-pending")),
 			]);
 			expect(outcome).toBe("still-pending");
-			// A correctly-stated error callback still settles as denial.
 			const errPromise = wait.catch((e: Error) => e);
 			await fetch(`${server.redirectUri}?error=access_denied&state=${encodeURIComponent(STATE)}`);
 			expect(await errPromise).toBeInstanceOf(OAuthCallbackError);
@@ -135,7 +131,6 @@ describe("startLoopbackServer", () => {
 	it("sanitizes control characters out of the error before it reaches the terminal", async () => {
 		await withServer(async (server) => {
 			const errPromise = server.waitForCallback(5000).catch((e: Error) => e);
-			// %1B%5B31m is an ANSI escape sequence (ESC [ 31 m) smuggled into error=.
 			await fetch(
 				`${server.redirectUri}?error=access_denied%1B%5B31mINJECTED&state=${encodeURIComponent(STATE)}`,
 			);

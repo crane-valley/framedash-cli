@@ -14,11 +14,6 @@ const MIME_MAP: Record<string, string> = {
 	".webp": "image/webp",
 };
 
-/**
- * Upload credential: a project API key (X-API-Key) or the process-shared
- * OAuth token manager (Authorization: Bearer, refreshed via the same
- * rotation state every other client in this process uses).
- */
 export type UploadCredential =
 	| { kind: "api-key"; apiKey: string }
 	| { kind: "oauth"; manager: OAuthTokenManager };
@@ -37,10 +32,6 @@ export type UploadResult = {
 	action: "created" | "updated";
 };
 
-/**
- * Upload a map image + metadata to the Framedash API.
- * Sends multipart/form-data to POST /api/v1/maps/upload.
- */
 export async function uploadMapCapture(opts: UploadOptions): Promise<UploadResult> {
 	assertSafeBaseUrl(opts.baseUrl);
 	const imageBuffer = await readFile(opts.imagePath);
@@ -90,8 +81,6 @@ export async function uploadMapCapture(opts: UploadOptions): Promise<UploadResul
 	};
 
 	let response = await send(false);
-	// Mirror the API client's OAuth 401 handling: refresh once and retry once
-	// (the shared manager serializes rotation with every other client).
 	if (response.status === 401 && opts.credential.kind === "oauth") {
 		response = await send(true);
 	}

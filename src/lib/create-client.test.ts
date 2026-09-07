@@ -232,7 +232,7 @@ describe("createClient", () => {
 		// poll. With independent managers, the second refresh would present the
 		// already-rotated refresh token and the server would revoke the grant;
 		// a shared manager makes rotation state process-wide singular.
-		const credential = oauthCredential(30_000); // inside the 60s skew window
+		const credential = oauthCredential(30_000);
 		await saveStoredEntry(ORIGIN, credential.entry);
 		const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
 			if (String(url).endsWith("/api/oauth/token")) return tokenSuccess();
@@ -246,8 +246,6 @@ describe("createClient", () => {
 		await defaultClient.get("/api/v1/projects");
 		await pollClient.get("/api/v1/projects");
 
-		// Exactly ONE refresh across both clients; the poll client rides on the
-		// shared manager's already-refreshed token.
 		const tokenCalls = fetchMock.mock.calls.filter((call) =>
 			String(call[0]).endsWith("/api/oauth/token"),
 		);

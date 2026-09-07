@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// Canonical source: ingest-core/src/config.ts MAX_MAP_ID_LEN
 const MAX_MAP_ID_LEN = 128;
 
 const dimensionsSchema = z.object({
@@ -23,12 +22,6 @@ const worldBoundsSchema = z
 		message: "World max bounds must be greater than min bounds",
 	});
 
-/**
- * Zod schema for the JSON sidecar metadata file produced by
- * engine capture scripts (UE5 Commandlet / Unity EditorScript).
- *
- * Matches brief-tech.md Section 8.4 format.
- */
 export const mapCaptureMetadataSchema = z.object({
 	version: z.literal("1.0"),
 	map_id: z.string().min(1).max(MAX_MAP_ID_LEN),

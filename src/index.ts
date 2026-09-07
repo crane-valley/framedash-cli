@@ -43,7 +43,6 @@ Global Options:
 
 Run 'framedash <command> --help' for command-specific options.`;
 
-/** Type-safe command registry — typos in export names become build-time errors. */
 const COMMANDS: Record<string, () => Promise<(args: string[]) => Promise<void>>> = {
 	login: () => import("./commands/login.js").then((m) => m.login),
 	logout: () => import("./commands/logout.js").then((m) => m.logout),

@@ -103,7 +103,7 @@ describe("token store", () => {
 
 	it("restricts file permissions on POSIX", async () => {
 		await saveStoredEntry(ORIGIN, entry());
-		if (process.platform === "win32") return; // chmod is a documented no-op
+		if (process.platform === "win32") return;
 		const mode = statSync(credentialsFilePath()).mode & 0o777;
 		expect(mode).toBe(0o600);
 	});
@@ -121,7 +121,6 @@ describe("token store", () => {
 		await saveStoredEntry(ORIGIN, entry());
 		await clearTokenStore();
 		expect(readTokenStore()).toEqual({});
-		// Idempotent on a missing file.
 		await expect(clearTokenStore()).resolves.toBeUndefined();
 	});
 
@@ -130,7 +129,6 @@ describe("token store", () => {
 		const orphan = `${credentialsFilePath()}.777.dead0000.tmp`;
 		writeFileSync(orphan, "{}", "utf8");
 
-		// A delete (the single-origin logout path) heals the orphan...
 		await deleteStoredEntry(ORIGIN);
 		expect(readdirSync(dirname(credentialsFilePath()))).toEqual(["credentials.json"]);
 
@@ -152,9 +150,7 @@ describe("token store", () => {
 		await expect(
 			saveStoredEntry(ORIGIN, entry({ refresh_token: "fdrt_local_test_rotated" })),
 		).resolves.toBeUndefined();
-		// The real write committed...
 		expect(readStoredEntry(ORIGIN)?.refresh_token).toBe("fdrt_local_test_rotated");
-		// ...and the dir-shaped orphan was reaped too.
 		expect(readdirSync(dirname(credentialsFilePath()))).toEqual(["credentials.json"]);
 	});
 
@@ -163,7 +159,6 @@ describe("token store", () => {
 		// Simulate a crashed write: an orphaned temp file with token material.
 		const orphan = `${credentialsFilePath()}.12345.abcd1234.tmp`;
 		writeFileSync(orphan, JSON.stringify({ leaked: true }), "utf8");
-		// Unrelated files must survive.
 		const unrelated = join(dirname(credentialsFilePath()), "other.txt");
 		writeFileSync(unrelated, "keep me", "utf8");
 
@@ -176,11 +171,9 @@ describe("token store", () => {
 	it("never treats prototype-chain keys as stored entries", async () => {
 		const stored = entry();
 		await saveStoredEntry(ORIGIN, stored);
-		// Object.prototype members must not masquerade as entries.
 		expect(readStoredEntry("toString")).toBeUndefined();
 		expect(readStoredEntry("hasOwnProperty")).toBeUndefined();
 		expect(readStoredEntry("constructor")).toBeUndefined();
-		// ...and must not report a successful delete (or trigger a rewrite).
 		await expect(deleteStoredEntry("toString")).resolves.toBe(false);
 		await expect(deleteStoredEntry("constructor")).resolves.toBe(false);
 		expect(readStoredEntry(ORIGIN)).toEqual(stored);

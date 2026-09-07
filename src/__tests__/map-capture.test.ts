@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mapCapture } from "../commands/map-capture.js";
 
-// Capture stderr/stdout
 const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
@@ -23,7 +22,6 @@ function validSidecar(imagePath = "test.png") {
 	});
 }
 
-// Minimal 1x1 white PNG
 const TINY_PNG = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
 	"base64",
@@ -154,10 +152,8 @@ describe("mapCapture", () => {
 	});
 
 	it("handles multiple files with mixed success", async () => {
-		// Valid file
 		await writeFile(join(tempDir, "good.json"), validSidecar());
 		await writeFile(join(tempDir, "test.png"), TINY_PNG);
-		// Invalid file
 		await writeFile(join(tempDir, "bad.json"), JSON.stringify({ version: "2.0" }));
 
 		const result = await mapCapture({
@@ -209,7 +205,6 @@ describe("mapCapture", () => {
 	});
 
 	it("resolves image_path relative to input dir", async () => {
-		// Create a subdirectory for images
 		await mkdir(join(tempDir, "images"));
 		await writeFile(join(tempDir, "images", "map.png"), TINY_PNG);
 		await writeFile(join(tempDir, "map.json"), validSidecar("images/map.png"));

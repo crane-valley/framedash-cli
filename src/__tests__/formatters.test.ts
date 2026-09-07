@@ -22,7 +22,7 @@ describe("formatOutput", () => {
 			];
 			const result = formatOutput(data, "table");
 			const lines = result.split("\n");
-			expect(lines).toHaveLength(4); // header + separator + 2 rows
+			expect(lines).toHaveLength(4);
 			expect(lines[0]).toContain("id");
 			expect(lines[0]).toContain("name");
 			expect(lines[1]).toMatch(/^-+/);
@@ -76,14 +76,11 @@ describe("formatOutput", () => {
 				dailyActiveUsers: [{ date: "2026-07-01", count: 10 }],
 			};
 			const result = formatOutput(data, "table");
-			// One section per key
 			expect(result).toContain("kpis");
 			expect(result).toContain("topEvents");
 			expect(result).toContain("dailyActiveUsers");
-			// Object section renders as key/value rows
 			expect(result).toContain("dau");
 			expect(result).toContain("100");
-			// Array-of-objects section renders as a normal table
 			expect(result).toContain("player.death");
 			expect(result).not.toContain("[object Object]");
 		});
@@ -99,12 +96,10 @@ describe("formatOutput", () => {
 		});
 
 		it("keeps a record with scalar fields plus one nested field as a one-row table", () => {
-			// Alert create/update responses are scalars plus channelIds: [] -- these
-			// must stay a single row, not fan out into per-field sections.
 			const data = { id: "a1", name: "High mem", metric: "memory", channelIds: [] };
 			const result = formatOutput(data, "table");
 			const lines = result.split("\n");
-			expect(lines).toHaveLength(3); // header + separator + one row
+			expect(lines).toHaveLength(3);
 			expect(lines[0]).toContain("id");
 			expect(lines[0]).toContain("channelIds");
 			expect(result).not.toContain("## id");
@@ -113,7 +108,6 @@ describe("formatOutput", () => {
 		it("does not section or dot-path-flatten a top-level array (no regression)", () => {
 			const data = [{ id: "1", meta: { a: 1 } }];
 			const result = formatOutput(data, "table");
-			// Nested object still JSON-stringified, not flattened to meta.a
 			expect(result).toContain('"a"');
 			expect(result).not.toContain("meta.a");
 		});
