@@ -47,9 +47,7 @@ describe("content command", () => {
 		for (const f of tmpFiles) {
 			try {
 				await unlink(f);
-			} catch {
-				// ignore cleanup errors
-			}
+			} catch {}
 		}
 	});
 

@@ -33,7 +33,6 @@ interface FakeChildOpts {
 	status?: number | null;
 	signal?: NodeJS.Signals | null;
 	error?: Error;
-	/** When true, never auto-emits: the test drives exit/error itself. */
 	hang?: boolean;
 	pid?: number;
 }
@@ -101,11 +100,8 @@ beforeEach(() => {
 	delete process.env.FRAMEDASH_BASE_URL;
 	delete process.env.FRAMEDASH_FORMAT;
 	delete process.env.FRAMEDASH_GIT_BRANCH;
-	// Restore the default mock behavior cleared above.
 	vi.mocked(execFileSync).mockReturnValue("gitsha\n");
-	// Default: the launched command exits 0 on the next microtask.
 	vi.mocked(spawn).mockImplementation(() => makeChild());
-	// spawnSync is only used by the win32 tree-kill path; a no-op return is fine.
 	vi.mocked(spawnSync).mockReturnValue({} as never);
 });
 
@@ -150,12 +146,10 @@ describe("run-profile-test command", () => {
 	});
 
 	it("launches the command with the FRAMEDASH_* contract exported", async () => {
-		// First get = pre-run count (none yet); subsequent = the ingest poll.
 		const client = mockClient({
 			get: vi.fn().mockResolvedValueOnce([]).mockResolvedValue(ingested),
 		});
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
-		// The game's own ingest (events:write) key lives in the environment.
 		process.env.FRAMEDASH_API_KEY = "game_ingest_key";
 
 		await runProfileTest([
@@ -182,8 +176,6 @@ describe("run-profile-test command", () => {
 					FRAMEDASH_GIT_BRANCH: "feat/x",
 					FRAMEDASH_TEST_SCENARIO: "smoke",
 					FRAMEDASH_PROJECT_ID: "test-project",
-					// The game keeps its ingest key; the gate's read key is not forwarded
-					// (asserting the exact value proves it is not "cli_read_key").
 					FRAMEDASH_API_KEY: "game_ingest_key",
 				}),
 			}),
@@ -203,7 +195,6 @@ describe("run-profile-test command", () => {
 		).rejects.toThrow("process.exit");
 		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("exited with code 7"));
 		expect(spy).toHaveBeenCalledWith(7);
-		// Exited on the failed run before any builds API call.
 		expect(client.get).not.toHaveBeenCalled();
 		restore();
 	});
@@ -219,14 +210,12 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).toHaveBeenCalledWith(
 			expect.stringContaining("Could not read the build's pre-run event count"),
 		);
-		// Aborted before launching the game.
 		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
 	it("fails closed with a rate-limit message when the pre-run 429 exceeds the retry cap", async () => {
 		const { restore } = expectExit();
-		// Retry-After of 200s is beyond the 120s cap: fail fast, do not retry.
 		const err = new ApiError("rate limited", 429, new Headers(), { retry_after: 200 });
 		const client = mockClient({ get: vi.fn().mockRejectedValueOnce(err) });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
@@ -235,14 +224,12 @@ describe("run-profile-test command", () => {
 			"process.exit",
 		);
 		expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("hourly rate limit"));
-		// Fail closed: never launched the game.
 		expect(spawn).not.toHaveBeenCalled();
 		restore();
 	});
 
 	it("fails closed without retrying on a non-retryable 429 (limiter failed closed)", async () => {
 		const { restore } = expectExit();
-		// Fail-closed limiter: 429 with no retry_after / retryable=false.
 		const err = new ApiError("rate limited", 429, new Headers());
 		const get = vi.fn().mockRejectedValue(err);
 		const client = mockClient({ get });
@@ -254,7 +241,6 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).toHaveBeenCalledWith(
 			expect.stringContaining("temporarily unavailable"),
 		);
-		// Not retried: exactly one snapshot fetch, and the game never launched.
 		expect(get).toHaveBeenCalledTimes(1);
 		expect(spawn).not.toHaveBeenCalled();
 		restore();
@@ -278,7 +264,6 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).not.toHaveBeenCalledWith(
 			expect.stringContaining("hourly rate limit"),
 		);
-		// Not retried, and the game never launched.
 		expect(get).toHaveBeenCalledTimes(1);
 		expect(spawn).not.toHaveBeenCalled();
 		restore();
@@ -289,16 +274,15 @@ describe("run-profile-test command", () => {
 		const err = new ApiError("rate limited", 429, new Headers(), { retry_after: 1 });
 		const get = vi
 			.fn()
-			.mockRejectedValueOnce(err) // pre-run snapshot: rate limited
-			.mockResolvedValueOnce([]) // pre-run snapshot retry: count 0
-			.mockResolvedValueOnce(ingested); // ingest poll: grown
+			.mockRejectedValueOnce(err)
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce(ingested);
 		const client = mockClient({ get });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
 		const run = runProfileTest(["--command", "game", "--build-id", "cand"]).catch(
 			(e: unknown) => e,
 		);
-		// Fire the 1s Retry-After backoff, then drain the launch + ingest poll.
 		await vi.advanceTimersByTimeAsync(1000);
 		await vi.runAllTimersAsync();
 		const outcome = await run;
@@ -340,7 +324,6 @@ describe("run-profile-test command", () => {
 
 	it("fails closed when the pre-run snapshot is not an array", async () => {
 		const { restore } = expectExit();
-		// A non-error response that is not a build array (malformed 200).
 		const client = mockClient({ get: vi.fn().mockResolvedValueOnce({ error: "nope" }) });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -353,12 +336,11 @@ describe("run-profile-test command", () => {
 	});
 
 	it("clears stale FRAMEDASH session vars the run does not set", async () => {
-		vi.mocked(execFileSync).mockReturnValue(""); // git yields nothing -> no branch/commit
+		vi.mocked(execFileSync).mockReturnValue("");
 		process.env.FRAMEDASH_GIT_BRANCH = "stale-branch";
 		const client = mockClient({ get: vi.fn() });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
-		// Only --build-id set; no --branch/--commit/--scenario and git is empty.
 		await runProfileTest([
 			"--command",
 			"game",
@@ -380,7 +362,6 @@ describe("run-profile-test command", () => {
 	it("strips an env-derived gate key from the launched game's environment", async () => {
 		const client = mockClient({ get: vi.fn() });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
-		// Gate key comes from the environment (no --api-key flag).
 		process.env.FRAMEDASH_API_KEY = "env_read_key";
 
 		await runProfileTest(["--command", "game", "--build-id", "cand", "--skip-wait"]);
@@ -411,9 +392,9 @@ describe("run-profile-test command", () => {
 		const { restore } = expectExit();
 		const get = vi
 			.fn()
-			.mockResolvedValueOnce([]) // pre-run count
-			.mockResolvedValueOnce(ingested) // ingest poll
-			.mockResolvedValueOnce(comparison([diff("frame_time", 8)])); // compare
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce(ingested)
+			.mockResolvedValueOnce(comparison([diff("frame_time", 8)]));
 		const client = mockClient({ get });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -438,9 +419,9 @@ describe("run-profile-test command", () => {
 	it("warns but exits 0 on a regression without --fail-on-regression", async () => {
 		const get = vi
 			.fn()
-			.mockResolvedValueOnce([]) // pre-run count
-			.mockResolvedValueOnce(ingested) // ingest poll
-			.mockResolvedValueOnce(comparison([diff("frame_time", 8)])); // compare
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce(ingested)
+			.mockResolvedValueOnce(comparison([diff("frame_time", 8)]));
 		const client = mockClient({ get });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -453,9 +434,9 @@ describe("run-profile-test command", () => {
 	it("warns (exit 0) in report-only mode when nothing is comparable", async () => {
 		const get = vi
 			.fn()
-			.mockResolvedValueOnce([]) // pre-run count
-			.mockResolvedValueOnce(ingested) // ingest poll
-			.mockResolvedValueOnce(comparison([diff("gpu_time", null)])); // no comparable data
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce(ingested)
+			.mockResolvedValueOnce(comparison([diff("gpu_time", null)]));
 		const client = mockClient({ get });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -468,9 +449,9 @@ describe("run-profile-test command", () => {
 	it("passes the gate when the regression is within the threshold", async () => {
 		const get = vi
 			.fn()
-			.mockResolvedValueOnce([]) // pre-run count
-			.mockResolvedValueOnce(ingested) // ingest poll
-			.mockResolvedValueOnce(comparison([diff("frame_time", 3)])); // compare
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce(ingested)
+			.mockResolvedValueOnce(comparison([diff("frame_time", 3)]));
 		const client = mockClient({ get });
 		vi.mocked(createClientModule.createClient).mockReturnValue(client);
 
@@ -526,9 +507,7 @@ describe("run-profile-test command", () => {
 	it("kills the process tree and fails closed WITHOUT gating on --command-timeout", async () => {
 		vi.useFakeTimers();
 		const { restore, spy } = expectExit();
-		// Spy the POSIX group-kill path; the win32 path shells out via spawnSync.
 		const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-		// The game never exits on its own; the test drives its (post-kill) exit.
 		const child = makeChild({ hang: true, pid: 4321 });
 		vi.mocked(spawn).mockReturnValue(child);
 		// With --baseline set, a CLEAN run would call the compare API. --skip-wait
@@ -550,9 +529,7 @@ describe("run-profile-test command", () => {
 			"1",
 		]).catch((err: unknown) => err);
 
-		// Fire the 1s command-timeout; the handler kills the tree.
 		await vi.advanceTimersByTimeAsync(1000);
-		// The killed process then reports its exit (SIGKILL), resolving the runner.
 		child.emit("exit", null, "SIGKILL");
 		const outcome = await run;
 
@@ -562,7 +539,6 @@ describe("run-profile-test command", () => {
 		expect(loggerModule.error).toHaveBeenCalledWith(
 			expect.stringContaining("exceeded the --command-timeout"),
 		);
-		// The whole tree was killed via the platform-specific strategy.
 		if (process.platform === "win32") {
 			expect(spawnSync).toHaveBeenCalledWith(
 				"taskkill",
@@ -572,7 +548,6 @@ describe("run-profile-test command", () => {
 		} else {
 			expect(killSpy).toHaveBeenCalledWith(-4321, "SIGKILL");
 		}
-		// Fail closed: aborted before the perf-diff compare (the gate API is untouched).
 		expect(client.get).not.toHaveBeenCalled();
 		killSpy.mockRestore();
 		vi.useRealTimers();

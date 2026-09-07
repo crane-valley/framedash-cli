@@ -13,7 +13,6 @@ describe("formatOutput table for /api/v1/query results", () => {
 	it("tabulates the rows of a {rows, rowCount} query result", () => {
 		const out = formatOutput(queryResult, "table");
 		const lines = out.split("\n");
-		// Header from the first row's keys, a separator, then one line per record.
 		expect(lines[0]).toContain("event_name");
 		expect(lines[0]).toContain("count");
 		expect(lines[1]).toMatch(/^-+/);
@@ -21,7 +20,6 @@ describe("formatOutput table for /api/v1/query results", () => {
 		expect(lines[2]).toContain("100");
 		expect(lines[3]).toContain("purchase");
 		expect(lines[3]).toContain("25");
-		// The whole rows array must NOT be dumped into a single JSON cell.
 		expect(out).not.toContain('[{"event_name"');
 		expect(out).not.toContain("rowCount");
 	});

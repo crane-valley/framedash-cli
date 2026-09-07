@@ -65,7 +65,6 @@ describe("resolveApiKey", () => {
 	it("exits when --api-key-file is '-' but stdin is an interactive TTY", () => {
 		withStdinTty(true, () => {
 			expectExit(() => resolveApiKey({ "api-key-file": "-" }));
-			// Must not block on readFileSync(0) -- the guard rejects before reading.
 			expect(readFileSync).not.toHaveBeenCalled();
 		});
 	});

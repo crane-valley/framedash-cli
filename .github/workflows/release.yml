@@ -35,7 +35,7 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write # required for npm Trusted Publishing via OIDC
+  id-token: write
 
 jobs:
   publish:
@@ -51,8 +51,8 @@ jobs:
             echo "::error::Release must run on main, not $REF"
             exit 1
           fi
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           # OIDC trusted publishing requires Node >= 22.14 and npm >= 11.5.1.
           node-version: "22.14.0"
@@ -65,11 +65,8 @@ jobs:
       # id-token: write for npm Trusted Publishing. The mirror packages build
       # from TypeScript only, so dependency postinstall hooks are not required.
       - run: npm install --ignore-scripts
-      # Build BEFORE npm publish. npm normalizes package.json (validating that
-      # each bin's target file exists) before any publish lifecycle script runs;
-      # if dist is absent at that point it silently strips the package bin. So the
-      # mirror has no prepack and builds here instead -- dist exists when npm
-      # normalizes, and the bin survives.
+      # So the mirror has no prepack and builds here instead -- dist exists when npm normalizes,
+      # and the bin survives.
       - run: npm run build
       - name: Publish via OIDC with provenance
         env:

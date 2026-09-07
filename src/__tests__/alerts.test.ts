@@ -121,7 +121,6 @@ describe("alerts command", () => {
 			}) as never);
 
 			const flags = [...requiredFlags];
-			// Replace --evaluation-days value with non-numeric
 			const idx = flags.indexOf("--evaluation-days");
 			flags[idx + 1] = "abc";
 
@@ -138,7 +137,6 @@ describe("alerts command", () => {
 				throw new Error("process.exit");
 			}) as never);
 
-			// Missing --name
 			await expect(
 				alerts(["create", "--map-id", "m1", "--threshold-profile-id", "tp1"]),
 			).rejects.toThrow("process.exit");

@@ -144,7 +144,6 @@ describe("perf-diff command", () => {
 			expect.stringContaining("builds/compare?baseline=a&candidate=b&days=30&mapId=lobby"),
 		);
 		expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(cmp, null, 2));
-		// No --fail-on-regression -> no verdict, no error
 		expect(loggerModule.error).not.toHaveBeenCalled();
 	});
 

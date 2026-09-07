@@ -35,10 +35,8 @@ Options:
   --base-url <url>       API base URL (default: https://app.framedash.dev)
   -h, --help             Show help`;
 
-/** Give the user five minutes to finish the browser consent. */
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** RFC 6749 scope tokens: printable ASCII except space, quote, backslash. */
 const SCOPE_RE = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 
 /**
@@ -62,13 +60,9 @@ function openBrowser(url: string): void {
 	}
 	try {
 		const child = spawn(command, args, { stdio: "ignore", detached: true });
-		child.on("error", () => {
-			// Best effort: the printed URL is the fallback.
-		});
+		child.on("error", () => {});
 		child.unref();
-	} catch {
-		// Best effort only.
-	}
+	} catch {}
 }
 
 export async function login(args: string[]): Promise<void> {
@@ -166,14 +160,11 @@ export async function login(args: string[]): Promise<void> {
 			// grant lingers on the server, then surface the original error.
 			try {
 				await revokeToken(baseUrl, tokens.refresh_token);
-			} catch {
-				// Best effort: the user can also revoke from Connected apps.
-			}
+			} catch {}
 			throw err;
 		}
 
 		success(`Logged in to ${origin}`);
-		// Scope + expiry only -- NEVER print token values.
 		log(`Scopes: ${entry.scope || "(none reported)"}`);
 		log(`Access token expires: ${new Date(entry.expires_at).toISOString()}`);
 		log(`Credentials stored in: ${credentialsFilePath()}`);

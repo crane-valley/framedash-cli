@@ -35,10 +35,10 @@ describe("assertSafeBaseUrl", () => {
 			"https://app.framedash.dev",
 			"https://app.framedash.dev/",
 			"http://localhost:3000",
-			"http://localhost.:3000", // trailing-dot FQDN
+			"http://localhost.:3000",
 			"http://api.localhost:3000",
 			"http://127.0.0.1:8787",
-			"http://127.0.0.5:8787", // anywhere in 127.0.0.0/8
+			"http://127.0.0.5:8787",
 			"http://[::1]:3000",
 		]) {
 			expect(() => assertSafeBaseUrl(url)).not.toThrow();
@@ -57,8 +57,6 @@ describe("assertSafeBaseUrl", () => {
 	});
 
 	it("rejects a URL with embedded credentials (userinfo bypass)", () => {
-		// https://real-host@evil.example passes the https check but the request
-		// and the X-API-Key header go to evil.example.
 		expect(() => assertSafeBaseUrl("https://app.framedash.dev@evil.example")).toThrow(
 			/credentials/,
 		);

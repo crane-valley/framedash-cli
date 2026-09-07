@@ -8,13 +8,11 @@
 import { ApiError } from "@framedash/api-client";
 
 /**
- * True when an ApiError carries a Retry-After we can actually honor: a finite,
- * non-negative number of seconds. The API omits retry_after (undefined) when its
- * limiter fails closed on a backend outage, and a malformed body could yield
- * null / NaN / Infinity / negative -- all of which mean "no usable window", so a
- * 429 with an invalid delay is treated the same as the fail-closed case. Shared
- * between withRateLimitRetry (whether to retry) and the command's error-reporting
- * (real rate-limit window vs. transient outage) so the two cannot drift.
+ * The API omits retry_after (undefined) when its limiter fails closed on a backend outage, and
+ * a malformed body could yield null / NaN / Infinity / negative -- all of which mean "no usable
+ * window", so a 429 with an invalid delay is treated the same as the fail-closed case. Shared
+ * between withRateLimitRetry (whether to retry) and the command's error-reporting (real
+ * rate-limit window vs. transient outage) so the two cannot drift.
  */
 export function isValidRetryAfter(retryAfter: number | undefined): retryAfter is number {
 	return retryAfter !== undefined && Number.isFinite(retryAfter) && retryAfter >= 0;
@@ -24,11 +22,8 @@ export function isValidRetryAfter(retryAfter: number | undefined): retryAfter is
 export interface RateLimitRetryOptions {
 	/** Sleep helper (injected so tests need no real timers). */
 	sleep: (ms: number) => Promise<void>;
-	/** Total tries including the first attempt (default 5). */
 	maxAttempts?: number;
-	/** Cap on the CUMULATIVE Retry-After wait, in ms (default 120_000). */
 	totalWaitCapMs?: number;
-	/** Per-retry hook (progress logging); not called on the final failure. */
 	onRetry?: (info: { attempt: number; waitMs: number; maxAttempts: number }) => void;
 }
 
@@ -84,12 +79,6 @@ export async function withRateLimitRetry<T>(
 	}
 }
 
-/**
- * The FRAMEDASH_* environment contract the SDK's
- * BeginAutomatedSessionFromEnvironment() reads to stamp the automated session.
- * The build id becomes the first-class `build_id`; branch/commit/scenario ride
- * the attributes map as ci.branch / ci.commit / ci.scenario.
- */
 export const ENV_BUILD_ID = "FRAMEDASH_BUILD_ID";
 export const ENV_GIT_BRANCH = "FRAMEDASH_GIT_BRANCH";
 export const ENV_GIT_COMMIT = "FRAMEDASH_GIT_COMMIT";
@@ -108,19 +97,13 @@ export const SESSION_ENV_KEYS = [
 	ENV_TEST_SCENARIO,
 ] as const;
 
-/** Resolved build identity stamped onto the profiling run. */
 export interface ProfileIdentity {
-	/** Becomes FRAMEDASH_BUILD_ID and the perf-diff candidate; always set. */
 	buildId: string;
-	/** FRAMEDASH_GIT_BRANCH (ci.branch); omitted from the env when empty. */
 	branch?: string;
-	/** FRAMEDASH_GIT_COMMIT (ci.commit); omitted when empty. */
 	commit?: string;
-	/** FRAMEDASH_TEST_SCENARIO (ci.scenario); omitted when empty. */
 	scenario?: string;
 }
 
-/** Raw identity flags as parsed from the command line (any may be unset). */
 export interface IdentityInputs {
 	buildId?: string;
 	branch?: string;
@@ -128,7 +111,6 @@ export interface IdentityInputs {
 	scenario?: string;
 }
 
-/** Git fallbacks (best-effort `git rev-parse` outputs; either may be unset). */
 export interface GitFallbacks {
 	branch?: string;
 	commit?: string;
@@ -143,11 +125,9 @@ function clean(value: unknown): string | undefined {
 }
 
 /**
- * Resolve the build identity from explicit flags, falling back to git. The
- * build id defaults to the resolved commit, so a CI run that sets only --commit
- * (or relies on the git fallback) still gets a stable, first-class build_id.
- * Returns null when no build id can be determined, so the caller can error out
- * before launching the game.
+ * The build id defaults to the resolved commit, so a CI run that sets only --commit (or relies
+ * on the git fallback) still gets a stable, first-class build_id. Returns null when no build id
+ * can be determined, so the caller can error out before launching the game.
  */
 export function resolveProfileIdentity(
 	flags: IdentityInputs,
@@ -177,17 +157,14 @@ export function buildSessionEnv(identity: ProfileIdentity): Record<string, strin
 	return env;
 }
 
-/** Result of validating a "seconds" CLI option value. */
 export type SecondsValidation = { value: number } | { error: string };
 
 /**
- * Validate a seconds-valued option. Returns the parsed number, or an error
- * message describing why it is invalid (the caller adds the --flag prefix and
- * decides how to surface it). A non-string value (unset, or the boolean parseArgs
- * yields for a value-less flag) falls back to `fallback`. With `allowZero` the
- * value may be 0 (used by --command-timeout, where 0 disables the bound);
- * otherwise it must be strictly positive (as --ingest-timeout / --poll-interval
- * require).
+ * Returns the parsed number, or an error message describing why it is invalid (the caller adds
+ * the --flag prefix and decides how to surface it). A non-string value (unset, or the boolean
+ * parseArgs yields for a value-less flag) falls back to `fallback`. With `allowZero` the value
+ * may be 0 (used by --command-timeout, where 0 disables the bound); otherwise it must be
+ * strictly positive (as --ingest-timeout / --poll-interval require).
  */
 export function validateSeconds(
 	value: string | boolean | undefined,
@@ -240,11 +217,9 @@ export function planTreeKill(platform: NodeJS.Platform, pid: number | undefined)
 	if (platform === "win32") {
 		return { platform: "win32", command: "taskkill", args: ["/pid", String(pid), "/t", "/f"] };
 	}
-	// Negative pid targets the whole process group (see detached spawn in the command).
 	return { platform: "posix", groupPid: -pid };
 }
 
-/** Minimal shape of a builds-list row (mirrors apps/web BuildInfo). */
 export interface BuildListEntry {
 	build_id: string;
 	/**
@@ -273,10 +248,9 @@ export function buildEventCount(
 }
 
 /**
- * True once the candidate build_id has produced MORE than `minEventCount`
- * perf-bearing events. With the default 0 this means "present with any events".
- * Passing the build's pre-run count makes the wait require fresh events from
- * THIS run, so a CI re-run for the same build_id is not satisfied by old data.
+ * With the default 0 this means "present with any events". Passing the build's pre-run count
+ * makes the wait require fresh events from THIS run, so a CI re-run for the same build_id is
+ * not satisfied by old data.
  */
 export function hasIngestedBuild(
 	builds: BuildListEntry[] | null | undefined,
@@ -288,9 +262,7 @@ export function hasIngestedBuild(
 
 /** Injected dependencies for waitForIngest (so the poll loop is unit-testable). */
 export interface WaitForIngestDeps {
-	/** Fetch the current builds list (one poll). */
 	fetchBuilds: () => Promise<BuildListEntry[]>;
-	/** Candidate build_id to wait for. */
 	buildId: string;
 	/**
 	 * Require the candidate's event count to exceed this value (its count before
@@ -298,17 +270,13 @@ export interface WaitForIngestDeps {
 	 * Defaults to 0 ("present with any events").
 	 */
 	minEventCount?: number;
-	/** Give up after this many milliseconds. */
 	timeoutMs: number;
-	/** Delay between polls, in milliseconds. */
 	intervalMs: number;
 	/** Sleep helper (injected so tests can advance a fake clock). */
 	sleep: (ms: number) => Promise<void>;
 	/** Monotonic clock in milliseconds (injected for the same reason). */
 	now: () => number;
-	/** Optional per-attempt hook (for progress logging). */
 	onPoll?: (attempt: number) => void;
-	/** Optional hook for a failed poll that will be retried. */
 	onPollError?: (error: unknown, attempt: number) => void;
 }
 
@@ -330,7 +298,6 @@ export async function waitForIngest(deps: WaitForIngestDeps): Promise<boolean> {
 			if (hasIngestedBuild(builds, deps.buildId, deps.minEventCount ?? 0)) return true;
 		} catch (error) {
 			deps.onPollError?.(error, attempt);
-			// Transient ingest / aggregation lag -- keep polling until the deadline.
 		}
 		// Read the clock once so the deadline check and the sleep window are
 		// consistent (a second now() call could advance past the deadline and yield

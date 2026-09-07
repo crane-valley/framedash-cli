@@ -46,7 +46,6 @@ Examples:
   FRAMEDASH_API_KEY=... FRAMEDASH_PROJECT_ID=... \\
   framedash map-capture --input-dir ./captures --upload`;
 
-/** CLI entry point for map-capture — parses args then delegates to mapCapture(). */
 export async function mapCaptureCommand(args: string[]): Promise<void> {
 	const { values } = parseArgs({
 		args,
@@ -130,6 +129,100 @@ export type MapCaptureResult = {
 	errorCount: number;
 };
 
+type MapCaptureFileContext = {
+	resolvedDir: string;
+	realInputDir: string;
+	upload: boolean;
+	dryRun: boolean;
+	opts: MapCaptureOptions;
+};
+
+async function processMapCaptureFile(
+	jsonFile: string,
+	context: MapCaptureFileContext,
+): Promise<boolean> {
+	const { resolvedDir, realInputDir, upload, dryRun, opts } = context;
+	const jsonPath = join(resolvedDir, jsonFile);
+	try {
+		const raw = await readFile(jsonPath, "utf-8");
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			error(`${jsonFile}: Invalid JSON`);
+			return false;
+		}
+
+		const result = mapCaptureMetadataSchema.safeParse(parsed);
+		if (!result.success) {
+			const issues = result.error.issues.map((issue) => issue.message).join("; ");
+			const isolationHint = opts.metadataPattern
+				? ""
+				: " Use --metadata-pattern '*.capture.json' to ignore unrelated JSON files.";
+			error(`${jsonFile}: Invalid metadata \u2014 ${issues}.${isolationHint}`);
+			return false;
+		}
+
+		const metadata = result.data;
+		if (isAbsolute(metadata.image_path)) {
+			error(`${jsonFile}: Absolute image paths are not allowed: ${metadata.image_path}`);
+			return false;
+		}
+		const imagePath = await realpath(resolve(resolvedDir, metadata.image_path)).catch(() => null);
+		if (!imagePath) {
+			error(`${jsonFile}: Image not found: ${metadata.image_path}`);
+			return false;
+		}
+		const rel = relative(realInputDir, imagePath);
+		if (rel.startsWith("..") || isAbsolute(rel)) {
+			error(`${jsonFile}: Image path escapes input directory: ${metadata.image_path}`);
+			return false;
+		}
+		const imgStat = await stat(imagePath);
+		if (!imgStat.isFile()) {
+			error(`${jsonFile}: Image path is not a file: ${metadata.image_path}`);
+			return false;
+		}
+
+		const imgExt = extname(imagePath).toLowerCase();
+		if (!ALLOWED_IMAGE_EXTS.has(imgExt)) {
+			error(`${jsonFile}: Unsupported image format: ${imgExt}`);
+			return false;
+		}
+
+		if (dryRun) {
+			success(
+				`${jsonFile}: map_id=${metadata.map_id}, ` +
+					`image=${metadata.image_path}, ` +
+					`bounds=[${metadata.world_bounds.min.x},${metadata.world_bounds.min.y}]` +
+					`→[${metadata.world_bounds.max.x},${metadata.world_bounds.max.y}], ` +
+					`size=${metadata.image_dimensions.width}x${metadata.image_dimensions.height}`,
+			);
+			return true;
+		}
+
+		if (upload) {
+			const uploadResult = await uploadMapCapture({
+				metadata,
+				imagePath,
+				credential: opts.credential as UploadCredential,
+				projectId: opts.projectId as string,
+				baseUrl: opts.baseUrl ?? "https://app.framedash.dev",
+			});
+			success(
+				`${metadata.map_id}: ${uploadResult.action} ` +
+					`(${metadata.image_dimensions.width}x${metadata.image_dimensions.height})`,
+			);
+		} else {
+			success(`${jsonFile}: Valid (map_id=${metadata.map_id})`);
+		}
+		return true;
+	} catch (err) {
+		error(`${jsonFile}: ${err instanceof Error ? err.message : String(err)}`);
+		return false;
+	}
+}
+
 export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureResult> {
 	const fail = { ok: false, successCount: 0, errorCount: 0 } as const;
 
@@ -189,96 +282,15 @@ export async function mapCapture(opts: MapCaptureOptions): Promise<MapCaptureRes
 	let errorCount = 0;
 
 	for (const jsonFile of jsonFiles) {
-		const jsonPath = join(resolvedDir, jsonFile);
-		try {
-			const raw = await readFile(jsonPath, "utf-8");
-			let parsed: unknown;
-			try {
-				parsed = JSON.parse(raw);
-			} catch {
-				error(`${jsonFile}: Invalid JSON`);
-				errorCount++;
-				continue;
-			}
-
-			const result = mapCaptureMetadataSchema.safeParse(parsed);
-			if (!result.success) {
-				const issues = result.error.issues.map((i) => i.message).join("; ");
-				const isolationHint = opts.metadataPattern
-					? ""
-					: " Use --metadata-pattern '*.capture.json' to ignore unrelated JSON files.";
-				error(`${jsonFile}: Invalid metadata \u2014 ${issues}.${isolationHint}`);
-				errorCount++;
-				continue;
-			}
-
-			const metadata = result.data;
-
-			// Verify image file exists and is within input directory
-			if (isAbsolute(metadata.image_path)) {
-				error(`${jsonFile}: Absolute image paths are not allowed: ${metadata.image_path}`);
-				errorCount++;
-				continue;
-			}
-			const imagePath = await realpath(resolve(resolvedDir, metadata.image_path)).catch(() => null);
-			if (!imagePath) {
-				error(`${jsonFile}: Image not found: ${metadata.image_path}`);
-				errorCount++;
-				continue;
-			}
-			const rel = relative(realInputDir, imagePath);
-			if (rel.startsWith("..") || isAbsolute(rel)) {
-				error(`${jsonFile}: Image path escapes input directory: ${metadata.image_path}`);
-				errorCount++;
-				continue;
-			}
-			const imgStat = await stat(imagePath);
-			if (!imgStat.isFile()) {
-				error(`${jsonFile}: Image path is not a file: ${metadata.image_path}`);
-				errorCount++;
-				continue;
-			}
-
-			const imgExt = extname(imagePath).toLowerCase();
-			if (!ALLOWED_IMAGE_EXTS.has(imgExt)) {
-				error(`${jsonFile}: Unsupported image format: ${imgExt}`);
-				errorCount++;
-				continue;
-			}
-
-			if (dryRun) {
-				success(
-					`${jsonFile}: map_id=${metadata.map_id}, ` +
-						`image=${metadata.image_path}, ` +
-						`bounds=[${metadata.world_bounds.min.x},${metadata.world_bounds.min.y}]` +
-						`→[${metadata.world_bounds.max.x},${metadata.world_bounds.max.y}], ` +
-						`size=${metadata.image_dimensions.width}x${metadata.image_dimensions.height}`,
-				);
-				successCount++;
-				continue;
-			}
-
-			if (upload) {
-				const uploadResult = await uploadMapCapture({
-					metadata,
-					imagePath,
-					credential: opts.credential as UploadCredential,
-					projectId: opts.projectId as string,
-					baseUrl: opts.baseUrl ?? "https://app.framedash.dev",
-				});
-				success(
-					`${metadata.map_id}: ${uploadResult.action} ` +
-						`(${metadata.image_dimensions.width}x${metadata.image_dimensions.height})`,
-				);
-			} else {
-				success(`${jsonFile}: Valid (map_id=${metadata.map_id})`);
-			}
-
-			successCount++;
-		} catch (err) {
-			error(`${jsonFile}: ${err instanceof Error ? err.message : String(err)}`);
-			errorCount++;
-		}
+		const succeeded = await processMapCaptureFile(jsonFile, {
+			resolvedDir,
+			realInputDir,
+			upload,
+			dryRun,
+			opts,
+		});
+		if (succeeded) successCount++;
+		else errorCount++;
 	}
 
 	log("");

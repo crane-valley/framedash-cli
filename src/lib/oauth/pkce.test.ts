@@ -21,7 +21,6 @@ describe("generateCodeVerifier", () => {
 
 describe("computeS256CodeChallenge", () => {
 	it("matches the RFC 7636 appendix B known-answer vector", () => {
-		// https://www.rfc-editor.org/rfc/rfc7636#appendix-B
 		expect(computeS256CodeChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")).toBe(
 			"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 		);

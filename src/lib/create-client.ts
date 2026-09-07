@@ -37,7 +37,6 @@ export function getSharedOAuthManager(
 	return manager;
 }
 
-/** Print an ApiError (with 429 rate-limit detail) and exit -- the default for one-shot commands. */
 function printAndExit(err: ApiError): never {
 	if (err.status === 429) {
 		const retryAfter = err.retryAfter;
@@ -62,15 +61,9 @@ function printAndExit(err: ApiError): never {
 }
 
 /**
- * Create the CLI's API client from the resolved credential. By default a
- * request error prints a message and exits the process (the right behavior
- * for one-shot commands). Pass `throwOnError` for a client used inside a
- * retry loop (e.g. the run-profile-test ingest poll), where a transient
- * 429/5xx must be thrown and retried, not exit.
- *
- * API keys go on X-API-Key as before. A stored OAuth login gets a wrapper
- * that refreshes near expiry, retries exactly once after a 401, and persists
- * rotated refresh tokens.
+ * One-shot commands exit on request errors, but a retry loop must receive transient 429/5xx
+ * failures as exceptions. Both client modes share OAuth rotation state so a refresh token is
+ * consumed only once.
  */
 export function createClient(
 	baseUrl: string,
@@ -85,7 +78,13 @@ export function createClient(
 		: printAndExit;
 
 	if (credential.kind === "api-key") {
-		return new ApiClient({ baseUrl, apiKey: credential.apiKey, projectId, onError });
+		return new ApiClient({
+			baseUrl,
+			apiKey: credential.apiKey,
+			projectId,
+			queryTimeoutMs: 120_000,
+			onError,
+		});
 	}
 
 	return new OAuthApiClient(
@@ -117,7 +116,6 @@ class OAuthApiClient extends ApiClient {
 		super({
 			baseUrl: oauthBaseUrl,
 			projectId: oauthProjectId,
-			// Never sent: all verbs are overridden to use the inner client.
 			accessToken: "oauth-managed-placeholder",
 			onError: (err): never => {
 				throw err;
@@ -150,6 +148,7 @@ class OAuthApiClient extends ApiClient {
 			baseUrl: this.oauthBaseUrl,
 			projectId: this.oauthProjectId,
 			accessToken,
+			queryTimeoutMs: 120_000,
 			onError: (err): never => {
 				throw err;
 			},
@@ -191,8 +190,6 @@ class OAuthApiClient extends ApiClient {
 		if (isApiError(err) && !this.options?.throwOnError) {
 			printAndExit(err);
 		}
-		// throwOnError mode, or a non-API failure (network error): propagate,
-		// matching the api-key client (index.ts prints and exits).
 		throw err;
 	}
 }

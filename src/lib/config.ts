@@ -5,7 +5,6 @@ import { readStoredEntry, type StoredTokenEntry } from "./oauth/token-store.js";
 
 export type OutputFormat = "json" | "table" | "csv";
 
-/** Where an API key came from (drives `framedash auth` source display). */
 export type ApiKeySource = "flag" | "file" | "env";
 
 /**
@@ -31,7 +30,6 @@ const NO_CREDENTIAL_MESSAGE =
 	"or run 'framedash login' (interactive). CI/non-interactive use should set FRAMEDASH_API_KEY. " +
 	"Create a key on your project's API Keys page at https://app.framedash.dev. Docs: https://docs.framedash.dev.";
 
-/** Resolve --base-url/--format (and env fallbacks) for commands that need no credential. */
 export function resolveBaseAndFormat(values: Record<string, unknown>): {
 	baseUrl: string;
 	format: OutputFormat;
@@ -60,15 +58,13 @@ export function resolveBaseAndFormat(values: Record<string, unknown>): {
 }
 
 /**
- * Resolve the API key, preferring sources that keep it out of the process
- * argument list: --api-key flag, then --api-key-file (a path, or "-" for stdin),
- * then the FRAMEDASH_API_KEY env var. Returns undefined if none is set.
+ * API-key files, stdin, and environment variables let callers keep credentials out of the
+ * process argument list.
  */
 export function resolveApiKey(values: Record<string, unknown>): string | undefined {
 	return resolveApiKeyWithSource(values)?.apiKey;
 }
 
-/** As resolveApiKey, but also reports WHICH source supplied the key. */
 export function resolveApiKeyWithSource(
 	values: Record<string, unknown>,
 ): { apiKey: string; source: ApiKeySource } | undefined {
@@ -85,7 +81,6 @@ export function resolveApiKeyWithSource(
 		}
 		let raw: string;
 		try {
-			// fd 0 reads piped stdin synchronously (e.g. `... | framedash --api-key-file -`).
 			raw = file === "-" ? readFileSync(0, "utf8") : readFileSync(file, "utf8");
 		} catch (err) {
 			error(
@@ -106,15 +101,10 @@ export function resolveApiKeyWithSource(
 }
 
 /**
- * Resolve the credential for the given base URL. API keys (flag > file > env)
- * win over a stored OAuth login; the OAuth token store is consulted only for
- * the resolved base URL's exact origin. Returns undefined when nothing is set.
- *
- * NOTE: throws a TypeError (from `new URL`) when `baseUrl` is not a valid
- * URL and no API key short-circuits the lookup. Callers that accept raw user
- * input for the base URL (map-capture) must validate or catch accordingly;
- * resolveConfig* callers are safe because resolveBaseAndFormat has already
- * vetted the URL.
+ * NOTE: throws a TypeError (from `new URL`) when `baseUrl` is not a valid URL and no API key
+ * short-circuits the lookup. Callers that accept raw user input for the base URL (map-capture)
+ * must validate or catch accordingly; resolveConfig* callers are safe because
+ * resolveBaseAndFormat has already vetted the URL.
  */
 export function resolveCredential(
 	values: Record<string, unknown>,
@@ -130,7 +120,6 @@ export function resolveCredential(
 	return undefined;
 }
 
-/** Resolve global CLI config from parsed flags and environment variables. */
 export function resolveConfig(values: Record<string, unknown>): CliConfig {
 	const { baseUrl, format } = resolveBaseAndFormat(values);
 	const credential = resolveCredential(values, baseUrl);
@@ -149,7 +138,6 @@ export function resolveConfig(values: Record<string, unknown>): CliConfig {
 	return { credential, projectId, baseUrl, format };
 }
 
-/** Resolve config for commands that don't require --project-id (e.g. auth). */
 export function resolveConfigWithoutProject(
 	values: Record<string, unknown>,
 ): Omit<CliConfig, "projectId"> {
@@ -163,7 +151,6 @@ export function resolveConfigWithoutProject(
 	return { credential, baseUrl, format };
 }
 
-/** Parse a string flag as a positive integer with a descriptive error. */
 export function parsePositiveInt(value: string, flagName: string): number {
 	const num = Number(value);
 	if (!Number.isInteger(num) || num <= 0) {
@@ -173,7 +160,6 @@ export function parsePositiveInt(value: string, flagName: string): number {
 	return num;
 }
 
-/** Parse a string flag as a non-negative number with a descriptive error. */
 export function parseNumber(value: string, flagName: string): number {
 	const num = Number(value);
 	if (Number.isNaN(num)) {
@@ -183,10 +169,6 @@ export function parseNumber(value: string, flagName: string): number {
 	return num;
 }
 
-/**
- * Global parseArgs option definitions shared by all commands.
- * Spread into each command's parseArgs call.
- */
 export const GLOBAL_OPTIONS = {
 	"api-key": { type: "string" as const },
 	"api-key-file": { type: "string" as const },

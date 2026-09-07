@@ -49,14 +49,11 @@ describe("query command", () => {
 		for (const f of tmpFiles) {
 			try {
 				await unlink(f);
-			} catch {
-				// ignore cleanup errors
-			}
+			} catch {}
 		}
 	});
 
 	it("refuses to run on a stored OAuth login: data:admin is not grantable via OAuth", async () => {
-		// No API key anywhere; only a stored `framedash login` for the origin.
 		delete process.env.FRAMEDASH_API_KEY;
 		const previousXdg = process.env.XDG_CONFIG_HOME;
 		const configHome = mkdtempSync(join(tmpdir(), "framedash-cli-query-"));
@@ -78,7 +75,6 @@ describe("query command", () => {
 
 			expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("data:admin"));
 			expect(loggerModule.error).toHaveBeenCalledWith(expect.stringContaining("FRAMEDASH_API_KEY"));
-			// Fails early: no request is ever sent with the doomed credential.
 			expect(client.post).not.toHaveBeenCalled();
 		} finally {
 			exitSpy.mockRestore();

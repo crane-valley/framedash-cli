@@ -41,17 +41,44 @@ const DEFAULT_COMMAND_TIMEOUT_S = 1800;
 // (2^31-1 ms); a larger value would be clamped to 1ms and fire almost at once.
 const MAX_COMMAND_TIMEOUT_S = Math.floor(2 ** 31 / 1000);
 
-type Values = Record<string, string | boolean | undefined>;
+const PROFILE_TEST_OPTIONS = {
+	command: { type: "string" },
+	"build-id": { type: "string" },
+	branch: { type: "string" },
+	commit: { type: "string" },
+	scenario: { type: "string" },
+	"command-timeout": { type: "string" },
+	"ingest-timeout": { type: "string" },
+	"poll-interval": { type: "string" },
+	"skip-wait": { type: "boolean" },
+	baseline: { type: "string" },
+	metric: { type: "string" },
+	threshold: { type: "string" },
+	days: { type: "string" },
+	map: { type: "string" },
+	platform: { type: "string" },
+	"fail-on-regression": { type: "boolean" },
+} as const;
 
-/** Resolved + validated regression-gate options. */
+type Values = Record<string, string | boolean | undefined>;
+type ProfileIdentity = NonNullable<ReturnType<typeof resolveProfileIdentity>>;
+
 interface GateOptions {
 	metric?: RegressionMetric;
 	thresholdPct: number;
-	/** Set only when a comparison should run (a baseline was given). */
 	baseline?: string;
 }
 
-/** Best-effort `git` lookup; returns undefined when git is absent or fails. */
+interface ProfileTestPlan {
+	command: string;
+	identity: ProfileIdentity;
+	gate: GateOptions;
+	commandTimeoutMs: number;
+	ingestTimeoutMs: number;
+	pollIntervalMs: number;
+	skipWait: boolean;
+}
+
 function gitOutput(args: string[]): string | undefined {
 	try {
 		const out = execFileSync("git", args, {
@@ -64,7 +91,6 @@ function gitOutput(args: string[]): string | undefined {
 	}
 }
 
-/** Parse a seconds-valued flag with a descriptive error, or fall back. */
 function parseSeconds(
 	value: string | boolean | undefined,
 	flag: string,
@@ -97,7 +123,6 @@ function passthroughProjectEnv(config: CliConfig): Record<string, string> {
 	};
 }
 
-/** Validate and resolve the regression-gate flags, exiting on a misconfig. */
 function resolveGateOptions(values: Values, candidateBuildId: string): GateOptions {
 	let metric: RegressionMetric | undefined;
 	if (values.metric !== undefined) {
@@ -142,6 +167,87 @@ function resolveGateOptions(values: Values, candidateBuildId: string): GateOptio
 	return { metric, thresholdPct, baseline };
 }
 
+function resolveProfileTestPlan(values: Values): ProfileTestPlan {
+	const command = (values.command as string | undefined)?.trim();
+	if (!command) {
+		error("--command is required (the game/profiling command to launch)");
+		process.exit(1);
+	}
+
+	const branchFlag = values.branch as string | undefined;
+	const commitFlag = values.commit as string | undefined;
+	const identity = resolveProfileIdentity(
+		{
+			buildId: values["build-id"] as string | undefined,
+			branch: branchFlag,
+			commit: commitFlag,
+			scenario: values.scenario as string | undefined,
+		},
+		{
+			branch: branchFlag ? undefined : gitOutput(["rev-parse", "--abbrev-ref", "HEAD"]),
+			commit: commitFlag ? undefined : gitOutput(["rev-parse", "HEAD"]),
+		},
+	);
+	if (!identity) {
+		error("Could not determine a build id: pass --build-id or --commit, or run inside a git repo.");
+		process.exit(1);
+	}
+
+	// Validate everything before launching a potentially long-running profiling command.
+	const gate = resolveGateOptions(values, identity.buildId);
+	const commandTimeoutMs =
+		parseSeconds(values["command-timeout"], "command-timeout", DEFAULT_COMMAND_TIMEOUT_S, {
+			allowZero: true,
+			max: MAX_COMMAND_TIMEOUT_S,
+		}) * 1000;
+	const ingestTimeoutMs =
+		parseSeconds(values["ingest-timeout"], "ingest-timeout", DEFAULT_INGEST_TIMEOUT_S) * 1000;
+	const pollIntervalMs =
+		parseSeconds(values["poll-interval"], "poll-interval", DEFAULT_POLL_INTERVAL_S) * 1000;
+
+	return {
+		command,
+		identity,
+		gate,
+		commandTimeoutMs,
+		ingestTimeoutMs,
+		pollIntervalMs,
+		skipWait: Boolean(values["skip-wait"]),
+	};
+}
+
+function buildProfilingEnvironment(
+	config: CliConfig,
+	values: Values,
+	identity: ProfileIdentity,
+): NodeJS.ProcessEnv {
+	const sessionEnv = buildSessionEnv(identity);
+	const childEnv: NodeJS.ProcessEnv = {
+		...process.env,
+		...passthroughProjectEnv(config),
+		...sessionEnv,
+	};
+
+	// The runner owns the session contract, so stale keys from earlier CI steps
+	// cannot leak into the launched game when this run did not set them.
+	for (const key of SESSION_ENV_KEYS) {
+		if (!(key in sessionEnv)) delete childEnv[key];
+	}
+
+	// The gate key needs analytics:read while the game needs events:write. An
+	// explicitly supplied gate key is already isolated from the child environment.
+	if (!values["api-key"] && !values["api-key-file"] && process.env.FRAMEDASH_API_KEY) {
+		delete childEnv.FRAMEDASH_API_KEY;
+		warn(
+			"Removed the gate's FRAMEDASH_API_KEY (an analytics:read key) from the launched " +
+				"game's environment so it is not used as the game's ingest key. Set the game's " +
+				"events:write key separately, or pass the gate key via --api-key/--api-key-file.",
+		);
+	}
+
+	return childEnv;
+}
+
 /**
  * Terminate the launched process TREE by pid. A plain child kill leaves
  * grandchildren behind (a game launched via the shell spawns helper processes),
@@ -162,7 +268,6 @@ function killProcessTree(pid: number | undefined): void {
 		process.kill(plan.groupPid, "SIGKILL");
 	} catch {
 		try {
-			// -groupPid is the validated positive child pid; fall back to it directly.
 			process.kill(-plan.groupPid, "SIGKILL");
 		} catch {
 			// The process (group) is already gone; nothing left to kill.
@@ -170,11 +275,9 @@ function killProcessTree(pid: number | undefined): void {
 	}
 }
 
-/** Outcome of a profiling run (mirrors the fields we branch on). */
 interface ProfilingRunResult {
 	status: number | null;
 	signal: NodeJS.Signals | null;
-	/** True when the run was killed for exceeding --command-timeout. */
 	timedOut: boolean;
 }
 
@@ -233,7 +336,6 @@ function runProfilingCommand(
 	});
 }
 
-/** Launch the profiling command and exit on any failure (or timeout). */
 async function launchProfilingRun(
 	command: string,
 	env: NodeJS.ProcessEnv,
@@ -355,7 +457,6 @@ async function readPriorEventCount(
 	return buildEventCount(builds, buildId);
 }
 
-/** Poll the builds list until the candidate gains fresh events; exit on timeout. */
 async function awaitIngest(
 	client: ApiClient,
 	values: Values,
@@ -476,6 +577,61 @@ async function runRegressionGate(
 	);
 }
 
+async function executeProfileTest(
+	client: ApiClient,
+	config: CliConfig,
+	values: Values,
+): Promise<void> {
+	const plan = resolveProfileTestPlan(values);
+
+	// Polling must throw on transient failures so the retry loop can recover. The
+	// comparison keeps the default exit-on-error client because it is the final gate.
+	const pollClient = plan.skipWait
+		? client
+		: createClient(config.baseUrl, config.credential, config.projectId, {
+				throwOnError: true,
+			});
+
+	// Snapshot before the run so waiting requires newly ingested events instead of
+	// accepting data left by a previous run with the same build id.
+	const priorEventCount = plan.skipWait
+		? 0
+		: await readPriorEventCount(pollClient, values, plan.identity.buildId);
+
+	success(
+		`Running profiling build '${plan.identity.buildId}'${
+			plan.identity.scenario ? ` (scenario: ${plan.identity.scenario})` : ""
+		}`,
+	);
+	await launchProfilingRun(
+		plan.command,
+		buildProfilingEnvironment(config, values, plan.identity),
+		plan.commandTimeoutMs,
+	);
+
+	if (!plan.skipWait) {
+		await awaitIngest(
+			pollClient,
+			values,
+			plan.identity.buildId,
+			priorEventCount,
+			plan.ingestTimeoutMs,
+			plan.pollIntervalMs,
+		);
+	}
+
+	if (!plan.gate.baseline) {
+		success("Profiling run complete. Pass --baseline to gate on a build-over-build regression.");
+		return;
+	}
+	await runRegressionGate(client, config, values, {
+		baseline: plan.gate.baseline,
+		candidate: plan.identity.buildId,
+		metric: plan.gate.metric,
+		thresholdPct: plan.gate.thresholdPct,
+	});
+}
+
 /**
  * Turnkey CI profiling gate: export the FRAMEDASH_* session contract, launch the
  * configured game/profiling command, wait for its perf data to ingest, then run
@@ -486,150 +642,9 @@ export async function runProfileTest(args: string[]): Promise<void> {
 		{
 			args,
 			help: HELP,
-			options: {
-				command: { type: "string" },
-				"build-id": { type: "string" },
-				branch: { type: "string" },
-				commit: { type: "string" },
-				scenario: { type: "string" },
-				"command-timeout": { type: "string" },
-				"ingest-timeout": { type: "string" },
-				"poll-interval": { type: "string" },
-				"skip-wait": { type: "boolean" },
-				baseline: { type: "string" },
-				metric: { type: "string" },
-				threshold: { type: "string" },
-				days: { type: "string" },
-				map: { type: "string" },
-				platform: { type: "string" },
-				"fail-on-regression": { type: "boolean" },
-			},
+			options: PROFILE_TEST_OPTIONS,
 		},
-		async ({ client, config, values }) => {
-			const command = (values.command as string | undefined)?.trim();
-			if (!command) {
-				error("--command is required (the game/profiling command to launch)");
-				process.exit(1);
-			}
-
-			// Resolve the build identity: explicit flags win, else fall back to git.
-			// Only spawn `git` for a field the caller did not provide.
-			const branchFlag = values.branch as string | undefined;
-			const commitFlag = values.commit as string | undefined;
-			const identity = resolveProfileIdentity(
-				{
-					buildId: values["build-id"] as string | undefined,
-					branch: branchFlag,
-					commit: commitFlag,
-					scenario: values.scenario as string | undefined,
-				},
-				{
-					branch: branchFlag ? undefined : gitOutput(["rev-parse", "--abbrev-ref", "HEAD"]),
-					commit: commitFlag ? undefined : gitOutput(["rev-parse", "HEAD"]),
-				},
-			);
-			if (!identity) {
-				error(
-					"Could not determine a build id: pass --build-id or --commit, or run inside a git repo.",
-				);
-				process.exit(1);
-			}
-
-			// Validate everything up front so a misconfig fails before we spend minutes
-			// running the game only to reject the result.
-			const gate = resolveGateOptions(values, identity.buildId);
-			// Bounds only the launched game/profiling process, NOT the ingest wait
-			// (--ingest-timeout covers that separately). 0 disables the bound.
-			const commandTimeoutMs =
-				parseSeconds(values["command-timeout"], "command-timeout", DEFAULT_COMMAND_TIMEOUT_S, {
-					allowZero: true,
-					max: MAX_COMMAND_TIMEOUT_S,
-				}) * 1000;
-			const ingestTimeoutMs =
-				parseSeconds(values["ingest-timeout"], "ingest-timeout", DEFAULT_INGEST_TIMEOUT_S) * 1000;
-			const pollIntervalMs =
-				parseSeconds(values["poll-interval"], "poll-interval", DEFAULT_POLL_INTERVAL_S) * 1000;
-
-			// The ingest snapshot/poll run in a retry loop, so they need a client that
-			// THROWS on a transient 429/5xx (the default client exits the process,
-			// which would kill the wait on a temporary blip). The gate compare keeps
-			// the default exit-on-error client (a compare failure should fail the gate).
-			const skipWait = Boolean(values["skip-wait"]);
-			const pollClient = skipWait
-				? client
-				: createClient(config.baseUrl, config.credential, config.projectId, {
-						throwOnError: true,
-					});
-
-			// Snapshot the candidate's event count BEFORE the run (only when we will
-			// wait), so the ingest wait can require fresh events rather than accepting
-			// a prior run's data for the same build_id.
-			const priorEventCount = skipWait
-				? 0
-				: await readPriorEventCount(pollClient, values, identity.buildId);
-
-			// 1) Launch the profiling command with the FRAMEDASH_* contract exported, so
-			// the SDK's BeginAutomatedSessionFromEnvironment() stamps build_id + ci.* tags
-			// onto every event (including the perf_heartbeat the gate reads).
-			success(
-				`Running profiling build '${identity.buildId}'${
-					identity.scenario ? ` (scenario: ${identity.scenario})` : ""
-				}`,
-			);
-			// Build the child environment. Two safeguards:
-			// 1) The runner owns the whole FRAMEDASH_* session contract: clear any
-			//    contract key it did not set this run, so the game cannot inherit stale
-			//    branch/commit/scenario left in the environment by a prior CI step.
-			// 2) The gate key (analytics:read) must not be handed to the game as its key
-			//    -- the game needs a separate events:write ingest key. When the gate key
-			//    came from FRAMEDASH_API_KEY in the environment (no --api-key flag), strip
-			//    it from the child so the game cannot inherit a read key.
-			const sessionEnv = buildSessionEnv(identity);
-			const childEnv: NodeJS.ProcessEnv = {
-				...process.env,
-				...passthroughProjectEnv(config),
-				...sessionEnv,
-			};
-			for (const key of SESSION_ENV_KEYS) {
-				if (!(key in sessionEnv)) delete childEnv[key];
-			}
-			if (!values["api-key"] && !values["api-key-file"] && process.env.FRAMEDASH_API_KEY) {
-				delete childEnv.FRAMEDASH_API_KEY;
-				warn(
-					"Removed the gate's FRAMEDASH_API_KEY (an analytics:read key) from the launched " +
-						"game's environment so it is not used as the game's ingest key. Set the game's " +
-						"events:write key separately, or pass the gate key via --api-key/--api-key-file.",
-				);
-			}
-			await launchProfilingRun(command, childEnv, commandTimeoutMs);
-
-			// 2) Wait for the candidate build's perf events to land (unless skipped).
-			if (!skipWait) {
-				await awaitIngest(
-					pollClient,
-					values,
-					identity.buildId,
-					priorEventCount,
-					ingestTimeoutMs,
-					pollIntervalMs,
-				);
-			}
-
-			// 3) Run the perf-diff gate when a baseline is given; otherwise the run is
-			// complete (the SDK reported the build; the caller can compare it later).
-			if (!gate.baseline) {
-				success(
-					"Profiling run complete. Pass --baseline to gate on a build-over-build regression.",
-				);
-				return;
-			}
-			await runRegressionGate(client, config, values, {
-				baseline: gate.baseline,
-				candidate: identity.buildId,
-				metric: gate.metric,
-				thresholdPct: gate.thresholdPct,
-			});
-		},
+		({ client, config, values }) => executeProfileTest(client, config, values),
 	);
 }
 

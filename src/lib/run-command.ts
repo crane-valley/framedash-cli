@@ -59,10 +59,6 @@ export async function runCommand(
 
 export type SubcommandMap = Record<string, (args: string[]) => Promise<void>>;
 
-/**
- * Create a subcommand dispatcher that handles help display and
- * routes to the correct handler based on the first positional arg.
- */
 export function withSubcommands(
 	name: string,
 	help: string,

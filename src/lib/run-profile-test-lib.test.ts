@@ -80,7 +80,6 @@ describe("withRateLimitRetry", () => {
 			throw rateLimited(80);
 		});
 
-		// 80s is under the 120s cap, but 80s + 80s = 160s is not: retry once, then bail.
 		await expect(withRateLimitRetry(fetchFn, { sleep })).rejects.toBeInstanceOf(ApiError);
 		expect(sleep).toHaveBeenCalledTimes(1);
 		expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -96,7 +95,6 @@ describe("withRateLimitRetry", () => {
 			ApiError,
 		);
 		expect(fetchFn).toHaveBeenCalledTimes(3);
-		// Slept before the 2nd and 3rd tries, not after the final failure.
 		expect(sleep).toHaveBeenCalledTimes(2);
 	});
 
@@ -170,7 +168,6 @@ describe("resolveProfileIdentity", () => {
 			{ branch: "git-branch" },
 		);
 		expect(id?.buildId).toBe("b1");
-		// Blank --branch falls through to the git fallback.
 		expect(id?.branch).toBe("git-branch");
 		expect(id?.scenario).toBeUndefined();
 	});
@@ -226,9 +223,7 @@ describe("buildEventCount", () => {
 	});
 
 	it("normalizes a JSON-quoted UInt64 string to a number", () => {
-		// ClickHouse count() serializes as a quoted string by default.
 		expect(buildEventCount([{ build_id: "cand", event_count: "10" }], "cand")).toBe(10);
-		// And the comparison must be numeric, not lexicographic ("10" > "9").
 		expect(hasIngestedBuild([{ build_id: "cand", event_count: "10" }], "cand", 9)).toBe(true);
 		expect(hasIngestedBuild([{ build_id: "cand", event_count: "9" }], "cand", 9)).toBe(false);
 	});
@@ -262,9 +257,7 @@ describe("hasIngestedBuild", () => {
 	});
 
 	it("requires the count to EXCEED a non-zero prior threshold", () => {
-		// Same count as before the run -> not yet fresh.
 		expect(hasIngestedBuild(builds, "cand", 3)).toBe(false);
-		// Grew past the prior count -> fresh events landed.
 		expect(hasIngestedBuild([{ build_id: "cand", event_count: 4 }], "cand", 3)).toBe(true);
 	});
 });
@@ -376,7 +369,6 @@ describe("waitForIngest", () => {
 
 	it("waits for the count to exceed minEventCount (ignores the prior run's data)", async () => {
 		const clock = fakeClock();
-		// Prior run left 5 events; the wait must not be satisfied until it grows.
 		const pages: BuildListEntry[][] = [
 			[{ build_id: "cand", event_count: 5 }],
 			[{ build_id: "cand", event_count: 5 }],
@@ -411,7 +403,6 @@ describe("waitForIngest", () => {
 			sleep: clock.sleep,
 		});
 		expect(ok).toBe(false);
-		// Polls at 0/10/20/30ms, then the deadline check fails -> 4 attempts.
 		expect(calls).toBe(4);
 	});
 

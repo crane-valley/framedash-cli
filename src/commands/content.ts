@@ -75,7 +75,6 @@ category are strings or null; metadata is an object or null.`,
 				process.exit(1);
 			}
 
-			// Accept both { entries: [...] } and plain [...]
 			const payload = Array.isArray(entries) ? { entries } : entries;
 			const validationError = validateContentImportPayload(payload);
 			if (validationError) {

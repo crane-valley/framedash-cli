@@ -12,7 +12,6 @@ export function success(message: string): void {
 	process.stderr.write(`  \u2713 ${message}\n`);
 }
 
-/** Non-fatal warning (the run still exits 0). */
 export function warn(message: string): void {
 	process.stderr.write(`  ! ${message}\n`);
 }

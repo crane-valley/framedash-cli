@@ -77,7 +77,6 @@ describe("login command", () => {
 		delete process.env.FRAMEDASH_BASE_URL;
 		vi.mocked(spawn).mockReturnValue(fakeSpawnChild() as never);
 		vi.mocked(exchangeAuthorizationCode).mockResolvedValue(TOKENS);
-		// Isolate the credential store path from the developer's real config dir.
 		previousXdg = process.env.XDG_CONFIG_HOME;
 		configHome = mkdtempSync(join(tmpdir(), "framedash-cli-login-"));
 		process.env.XDG_CONFIG_HOME = configHome;
@@ -116,11 +115,9 @@ describe("login command", () => {
 		expect(url.searchParams.get("scope")).toBe("analytics:read");
 		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
 
-		// The state minted for the loopback server must be the one in the URL.
 		const expectedState = vi.mocked(startLoopbackServer).mock.calls[0]?.[0];
 		expect(url.searchParams.get("state")).toBe(expectedState);
 
-		// The challenge in the URL must be S256(verifier sent to the exchange).
 		const exchangeArgs = vi.mocked(exchangeAuthorizationCode).mock.calls[0];
 		expect(exchangeArgs?.[0]).toBe("https://app.framedash.dev");
 		const { code, codeVerifier, redirectUri } = exchangeArgs?.[1] as {
@@ -133,7 +130,6 @@ describe("login command", () => {
 		expect(codeVerifier.length).toBeGreaterThanOrEqual(43);
 		expect(url.searchParams.get("code_challenge")).toBe(computeS256CodeChallenge(codeVerifier));
 
-		// Tokens stored under the origin; server closed.
 		expect(saveStoredEntry).toHaveBeenCalledWith(
 			"https://app.framedash.dev",
 			expect.objectContaining({
@@ -303,11 +299,9 @@ describe("login command", () => {
 			await expect(login(["--no-browser"])).resolves.toBeUndefined();
 			expect(process.exitCode).toBe(1);
 			const errors = vi.mocked(loggerModule.error).mock.calls.map((c) => String(c[0]));
-			// Raw server error FIRST, then the actionable fix.
 			expect(errors[0]).toContain("redirect_uri");
 			expect(errors[1]).toContain("callback path or port");
 			expect(saveStoredEntry).not.toHaveBeenCalled();
-			// The loopback server must be closed before the process exits.
 			expect(server.close).toHaveBeenCalled();
 		} finally {
 			process.exitCode = prevExitCode;
