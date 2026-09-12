@@ -21,7 +21,8 @@ Prepared in source; public mirror and npm publication are not yet verified.
 - Uses API client 0.1.6 for the new run contract.
 - Validates required run evidence and comparison consistency before reporting
   success, including duration and hitch bounds implied by nearest-rank quantiles
-  on the same sorted frame population. Inconclusive results must retain every
+  on the same sorted frame population. Quantile intervals must match one of the
+  method's fixed histogram bins. Inconclusive results must retain every
   locally expected reason while allowing additional server reasons. Table/CSV output uses supported
   quantiles while tolerating additive response fields.
 

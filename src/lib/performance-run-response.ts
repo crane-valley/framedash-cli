@@ -6,6 +6,7 @@ import {
 	PERFORMANCE_RUN_METHOD,
 	PERFORMANCE_RUN_MIN_SAMPLES,
 	type PerformanceRunComparison,
+	performanceHistogramBounds,
 } from "@framedash/api-client";
 import { z } from "zod";
 
@@ -27,8 +28,14 @@ const interval = (min: number) =>
 		.refine(([lower, upper]) => lower <= upper);
 const observed = interval(0);
 const signed = interval(-32768);
+const histogramIntervals = Array.from({ length: 256 }, (_, index) =>
+	performanceHistogramBounds(index),
+);
+const histogramInterval = observed.refine(([lower, upper]) =>
+	histogramIntervals.some(([binLower, binUpper]) => lower === binLower && upper === binUpper),
+);
 const quantiles = z
-	.looseObject({ p50: observed, p95: observed, p99: observed })
+	.looseObject({ p50: histogramInterval, p95: histogramInterval, p99: histogramInterval })
 	.refine((value) =>
 		([0, 1] as const).every((i) => value.p50[i] <= value.p95[i] && value.p95[i] <= value.p99[i]),
 	);

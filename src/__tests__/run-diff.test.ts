@@ -300,3 +300,19 @@ it("intersects hitch and quantile constraints on the same frame population", asy
 	await runDiff(["--baseline", BASE, "--candidate", CANDIDATE]);
 	expect(log).toHaveBeenCalled();
 });
+
+it("rejects a quantile spanning multiple histogram bins despite feasible frame totals", async () => {
+	const baseline = completeRun(BASE);
+	baseline.quantiles = { p50: [16, 18], p95: [16, 18], p99: [16, 18] };
+	baseline.durationMs = 16100;
+	baseline.hitches = baseline.hitches.map((hitch, i) => ({
+		...hitch,
+		count: i === 0 ? 100 : 0,
+		per1000Frames: i === 0 ? 100 : 0,
+	}));
+	get.mockResolvedValue({
+		...comparePerformanceRuns(baseline, completeRun(CANDIDATE)),
+		windowDays: 7,
+	});
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
