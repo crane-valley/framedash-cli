@@ -20,6 +20,7 @@ Commands:
   funnel         Analyze event funnels
   builds         List builds seen for the project (for perf-diff)
   perf-diff      Compare two builds and gate CI on perf regressions
+  run-diff       Compare per-frame runs, conditions, tails and unchanged repeats
   run-profile-test  Run a profiling build, wait for ingest, gate on regression
   query          Execute a read-only ClickHouse query
   alerts         Manage alert rules (list, create, update, delete)
@@ -54,6 +55,7 @@ const COMMANDS: Record<string, () => Promise<(args: string[]) => Promise<void>>>
 	funnel: () => import("./commands/funnel.js").then((m) => m.funnel),
 	builds: () => import("./commands/builds.js").then((m) => m.builds),
 	"perf-diff": () => import("./commands/perf-diff.js").then((m) => m.perfDiff),
+	"run-diff": () => import("./commands/run-diff.js").then((m) => m.runDiff),
 	"run-profile-test": () => import("./commands/run-profile-test.js").then((m) => m.runProfileTest),
 	query: () => import("./commands/query.js").then((m) => m.query),
 	alerts: () => import("./commands/alerts.js").then((m) => m.alerts),
