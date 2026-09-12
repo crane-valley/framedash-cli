@@ -27,7 +27,11 @@ const interval = (min: number) =>
 		.refine(([lower, upper]) => lower <= upper);
 const observed = interval(0);
 const signed = interval(-32768);
-const quantiles = z.looseObject({ p50: observed, p95: observed, p99: observed });
+const quantiles = z
+	.looseObject({ p50: observed, p95: observed, p99: observed })
+	.refine((value) =>
+		([0, 1] as const).every((i) => value.p50[i] <= value.p95[i] && value.p95[i] <= value.p99[i]),
+	);
 const deltas = z.looseObject({ p50: signed, p95: signed, p99: signed });
 const metadata = z.looseObject({
 	buildId: label,
@@ -51,7 +55,11 @@ const hitches = z
 	)
 	.length(4)
 	.refine((values) =>
-		values.every((value, i) => value.thresholdMs === PERFORMANCE_RUN_HITCH_THRESHOLDS[i]),
+		values.every(
+			(value, i) =>
+				value.thresholdMs === PERFORMANCE_RUN_HITCH_THRESHOLDS[i] &&
+				value.count <= (values[i - 1]?.count ?? PERFORMANCE_RUN_MAX_SAMPLES),
+		),
 	);
 const complete = z
 	.looseObject({
@@ -72,6 +80,8 @@ const complete = z
 			run.samples === run.metadata.targetFrames &&
 			run.warmupSamples === run.metadata.warmupFrames &&
 			BigInt(run.endedAtUs) > BigInt(run.startedAtUs) &&
+			run.durationMs - Math.max(1, run.durationMs * 0.000001) <=
+				Number(BigInt(run.endedAtUs) - BigInt(run.startedAtUs)) / 1000 &&
 			run.hitches.every(
 				(hitch) =>
 					hitch.count <= run.samples &&
@@ -117,11 +127,11 @@ export function isPerformanceRunResponse(value: unknown): value is PerformanceRu
 	const parsed = response.safeParse(value);
 	if (!parsed.success) return false;
 	const result = parsed.data;
+	const expected = comparePerformanceRuns(result.baseline, result.candidate, result.repeat);
+	if (result.status !== expected.status) return false;
 	if (result.status === "inconclusive")
 		return result.reasons.length > 0 && !result.quantiles && !result.repeatVariation;
 	if (result.reasons.length || !result.quantiles) return false;
-	const expected = comparePerformanceRuns(result.baseline, result.candidate, result.repeat);
-	if (expected.status !== "comparable") return false;
 	const same = (a: number[] | undefined, b: number[] | undefined) =>
 		a === undefined || b === undefined ? a === b : a[0] === b[0] && a[1] === b[1];
 	return RUN_QUANTILES.every((q) => {

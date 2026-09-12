@@ -160,3 +160,49 @@ it.each([
 	expect(log).toHaveBeenCalledWith(expect.stringContaining("p99"));
 	expect(log).not.toHaveBeenCalledWith(expect.stringContaining("futureMetadata"));
 });
+
+it("rejects reversed quantiles even when comparison intervals match them", async () => {
+	const baseline = completeRun(BASE);
+	baseline.quantiles.p50 = [30, 31];
+	get.mockResolvedValue({
+		...comparePerformanceRuns(baseline, completeRun(CANDIDATE)),
+		windowDays: 7,
+	});
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it("rejects increasing hitch counts and accepts decreasing counts", async () => {
+	const data = comparable();
+	data.baseline.hitches = completeRun(BASE).hitches.map((hitch, i) => ({
+		...hitch,
+		count: i === 3 ? 1 : 0,
+		per1000Frames: i === 3 ? 1 : 0,
+	}));
+	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+	data.baseline.hitches = completeRun(BASE).hitches.map((hitch, i) => ({
+		...hitch,
+		count: i === 0 ? 100 : 0,
+		per1000Frames: i === 0 ? 100 : 0,
+	}));
+	await runDiff(["--baseline", BASE, "--candidate", CANDIDATE]);
+	expect(log).toHaveBeenCalled();
+});
+
+it("rejects an inconclusive status contradicting complete matching runs", async () => {
+	const data = comparable();
+	const { quantiles: _quantiles, ...inconclusive } = data;
+	get.mockResolvedValue({
+		...inconclusive,
+		status: "inconclusive",
+		reasons: ["baseline_not_complete"],
+	});
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it("rejects a measured duration longer than the run wall time", async () => {
+	const data = comparable();
+	data.baseline.durationMs = 18000;
+	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
