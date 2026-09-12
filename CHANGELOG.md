@@ -21,7 +21,8 @@ Prepared in source; public mirror and npm publication are not yet verified.
 - Uses API client 0.1.6 for the new run contract.
 - Validates required run evidence and comparison consistency before reporting
   success, including duration and hitch bounds implied by nearest-rank quantiles
-  and the reasons for an inconclusive result. Table/CSV output uses supported
+  on the same sorted frame population. Inconclusive results must retain every
+  locally expected reason while allowing additional server reasons. Table/CSV output uses supported
   quantiles while tolerating additive response fields.
 
 ## [0.1.10] - 2026-09-07

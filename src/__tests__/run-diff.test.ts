@@ -254,3 +254,49 @@ it.each([
 	});
 	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
 });
+
+it("accepts additional server reasons while retaining every locally required reason", async () => {
+	get.mockResolvedValue({
+		status: "inconclusive",
+		reasons: ["future_server_reason", "candidate_not_complete", "baseline_not_complete"],
+		baseline: { runId: BASE, status: "missing", reasons: ["no_records_in_window"] },
+		candidate: { runId: CANDIDATE, status: "missing", reasons: ["no_records_in_window"] },
+		windowDays: 7,
+	});
+	await runDiff(["--baseline", BASE, "--candidate", CANDIDATE]);
+	expect(process.exitCode).toBe(2);
+	expect(log).toHaveBeenCalledWith(expect.stringContaining("future_server_reason"));
+});
+
+it("rejects a duration above the total permitted by zero hitches", async () => {
+	const data = comparable();
+	data.baseline.durationMs = 20000;
+	data.baseline.endedAtUs = "30000000";
+	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it("intersects hitch and quantile constraints on the same frame population", async () => {
+	const baseline = completeRun(BASE);
+	baseline.quantiles.p95 = [100, 104];
+	baseline.quantiles.p99 = [100, 104];
+	baseline.durationMs = 13000;
+	baseline.endedAtUs = "30000000";
+	baseline.hitches = baseline.hitches.map((hitch, i) => ({
+		...hitch,
+		count: i < 3 ? 100 : 0,
+		per1000Frames: i < 3 ? 100 : 0,
+	}));
+	get.mockResolvedValue({
+		...comparePerformanceRuns(baseline, completeRun(CANDIDATE)),
+		windowDays: 7,
+	});
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+	baseline.durationMs = 900 * 16 + 100 * 100;
+	get.mockResolvedValue({
+		...comparePerformanceRuns(baseline, completeRun(CANDIDATE)),
+		windowDays: 7,
+	});
+	await runDiff(["--baseline", BASE, "--candidate", CANDIDATE]);
+	expect(log).toHaveBeenCalled();
+});

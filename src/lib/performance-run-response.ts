@@ -72,28 +72,62 @@ function consistentFrameEvidence(run: {
 	const p50 = Math.ceil(samples * 0.5);
 	const p95 = Math.ceil(samples * 0.95);
 	const p99 = Math.ceil(samples * 0.99);
-	// Nearest-rank intervals bound every sorted frame between successive ranks.
-	const lower =
-		values.p50[0] * (p95 - p50) + values.p95[0] * (p99 - p95) + values.p99[0] * (samples - p99 + 1);
-	const upper =
-		values.p50[1] * p50 +
-		values.p95[1] * (p95 - p50) +
-		values.p99[1] * (p99 - p95) +
-		32768 * (samples - p99);
-	const tolerance = Math.max(1, durationMs * 0.000001);
-	if (durationMs + tolerance < lower || durationMs - tolerance > upper) return false;
 	const ranked = [
 		{ rank: p50, interval: values.p50 },
 		{ rank: p95, interval: values.p95 },
 		{ rank: p99, interval: values.p99 },
 	];
-	return run.hitches.every((hitch) =>
-		ranked.every(
-			({ rank, interval: [lower, upper] }) =>
-				(upper > hitch.thresholdMs || hitch.count <= samples - rank) &&
-				(lower <= hitch.thresholdMs || hitch.count >= samples - rank + 1),
-		),
-	);
+	const lowerBounds = [
+		{ rank: 1, value: 0, exclusive: true },
+		...ranked.map(({ rank, interval }) => ({ rank, value: interval[0], exclusive: false })),
+		...run.hitches.map(({ count, thresholdMs }) => ({
+			rank: samples - count + 1,
+			value: thresholdMs,
+			exclusive: true,
+		})),
+	];
+	const upperBounds = [
+		{ rank: samples, value: 32768, exclusive: true },
+		...ranked.map(({ rank, interval }) => ({ rank, value: interval[1], exclusive: true })),
+		...run.hitches.map(({ count, thresholdMs }) => ({
+			rank: samples - count,
+			value: thresholdMs,
+			exclusive: false,
+		})),
+	];
+	// Both measurements constrain the same sorted frames; separate totals miss intersections.
+	const boundaries = [
+		...new Set([
+			1,
+			samples + 1,
+			...lowerBounds.map((bound) => bound.rank),
+			...upperBounds.map((bound) => bound.rank + 1),
+		]),
+	]
+		.filter((rank) => rank >= 1 && rank <= samples + 1)
+		.sort((a, b) => a - b);
+	let minimumDuration = 0;
+	let maximumDuration = 0;
+	for (const [index, start] of boundaries.entries()) {
+		const end = boundaries[index + 1];
+		if (end === undefined) break;
+		const lower = lowerBounds.filter((bound) => bound.rank <= start);
+		const upper = upperBounds.filter((bound) => bound.rank >= start);
+		const minimum = Math.max(...lower.map((bound) => bound.value));
+		const maximum = Math.min(...upper.map((bound) => bound.value));
+		if (
+			minimum > maximum ||
+			(minimum === maximum &&
+				(lower.some((bound) => bound.value === minimum && bound.exclusive) ||
+					upper.some((bound) => bound.value === maximum && bound.exclusive)))
+		)
+			return false;
+		const frames = end - start;
+		minimumDuration += frames * minimum;
+		maximumDuration += frames * maximum;
+	}
+	const tolerance = Math.max(1, durationMs * 0.000001);
+	return durationMs + tolerance >= minimumDuration && durationMs - tolerance <= maximumDuration;
 }
 
 const complete = z
@@ -167,9 +201,9 @@ export function isPerformanceRunResponse(value: unknown): value is PerformanceRu
 	if (result.status !== expected.status) return false;
 	if (result.status === "inconclusive")
 		return (
-			result.reasons.length === expected.reasons.length &&
+			result.reasons.length > 0 &&
 			new Set(result.reasons).size === result.reasons.length &&
-			result.reasons.every((reason) => expected.reasons.includes(reason)) &&
+			expected.reasons.every((reason) => result.reasons.includes(reason)) &&
 			!result.quantiles &&
 			!result.repeatVariation
 		);
