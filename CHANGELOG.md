@@ -6,6 +6,26 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.11] - Publication pending
+
+Prepared in source; public mirror and npm publication are not yet verified.
+
+### Added
+
+- `framedash run-diff` compares explicit Unity performance-run UUIDs within the
+  last seven days. It reports quantile intervals, hitch counts, completion and
+  condition evidence, with an optional unchanged repeat. Exit 0 means comparable,
+  2 means inconclusive, and 1 means a command/API error. This opt-in pilot requires
+  Unity SDK 0.1.8 and the matching endpoint; COPPA-enabled organizations cannot
+  use it. Existing `perf-diff` and `run-profile-test` gates are unchanged.
+- Uses API client 0.1.6 for the new run contract.
+- Validates required run evidence and comparison consistency before reporting
+  success, including duration and hitch bounds implied by nearest-rank quantiles
+  on the same sorted frame population. Quantile intervals must match one of the
+  method's fixed histogram bins. Inconclusive results must retain every
+  locally expected reason while allowing additional server reasons. Table/CSV output uses supported
+  quantiles while tolerating additive response fields.
+
 ## [0.1.10] - 2026-09-07
 
 ### Fixed

@@ -16,6 +16,7 @@ Framedash CLI tool for CI/CD pipelines, analytics queries, and coding agent inte
 | `framedash funnel` | Fetch funnel conversion data |
 | `framedash builds` | List builds seen for the project (for `perf-diff`) |
 | `framedash perf-diff` | Compare two builds and gate CI on a perf regression |
+| `framedash run-diff` | Pilot: compare per-frame run UUIDs, conditions, tails and an unchanged repeat |
 | `framedash run-profile-test` | Run a profiling build, wait for ingest, then gate on a regression |
 | `framedash alerts` | Manage alert rules and channels |
 | `framedash maps` | List and manage map overlays |
@@ -28,6 +29,17 @@ Framedash CLI tool for CI/CD pipelines, analytics queries, and coding agent inte
 their UUIDs via `--map-id` and `--threshold-profile-id`. Discover those UUIDs
 without opening the dashboard by running `framedash maps list` and
 `framedash threshold-profiles list`.
+
+## Per-frame run pilot
+
+`run-diff --baseline <uuid> --candidate <uuid> [--repeat <uuid>]` is added in CLI
+0.1.11. It reads opt-in Unity captures from the last seven days and requires
+Unity SDK 0.1.8 capture plus the matching web endpoint. CLI 0.1.10 and earlier
+do not contain this command. COPPA-enabled organizations cannot use this pilot.
+Use `--format json` for the complete sample, hitch and condition evidence.
+Exit 0 means comparable, 2 means inconclusive, and 1 means a command/API error.
+It reports quantile intervals and does not apply a regression gate. Existing
+`perf-diff` thresholds and `run-profile-test` behavior are unchanged.
 
 ## Authentication
 

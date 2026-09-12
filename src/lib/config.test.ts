@@ -49,14 +49,14 @@ describe("resolveApiKey", () => {
 	});
 
 	it("reads and trims the key from --api-key-file", () => {
-		vi.mocked(readFileSync).mockReturnValue("file-key\n" as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue("file-key\n");
 		expect(resolveApiKey({ "api-key-file": "k.txt" })).toBe("file-key");
 		expect(readFileSync).toHaveBeenCalledWith("k.txt", "utf8");
 	});
 
 	it("reads the key from stdin (fd 0) when --api-key-file is '-'", () => {
 		withStdinTty(false, () => {
-			vi.mocked(readFileSync).mockReturnValue("stdin-key\n" as unknown as Buffer);
+			vi.mocked(readFileSync).mockReturnValue("stdin-key\n");
 			expect(resolveApiKey({ "api-key-file": "-" })).toBe("stdin-key");
 			expect(readFileSync).toHaveBeenCalledWith(0, "utf8");
 		});
@@ -79,7 +79,7 @@ describe("resolveApiKey", () => {
 	});
 
 	it("exits when the key file is empty/whitespace", () => {
-		vi.mocked(readFileSync).mockReturnValue("   \n" as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue("   \n");
 		expectExit(() => resolveApiKey({ "api-key-file": "k.txt" }));
 	});
 
@@ -109,7 +109,7 @@ describe("resolveCredential precedence", () => {
 
 	it("prefers the --api-key flag over everything (store never read)", () => {
 		process.env.FRAMEDASH_API_KEY = "env-key";
-		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON);
 		expect(resolveCredential({ "api-key": "flag-key", "api-key-file": "k.txt" }, BASE_URL)).toEqual(
 			{ kind: "api-key", apiKey: "flag-key", source: "flag" },
 		);
@@ -118,7 +118,7 @@ describe("resolveCredential precedence", () => {
 
 	it("prefers --api-key-file over env and stored tokens", () => {
 		process.env.FRAMEDASH_API_KEY = "env-key";
-		vi.mocked(readFileSync).mockReturnValue("file-key\n" as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue("file-key\n");
 		expect(resolveCredential({ "api-key-file": "k.txt" }, BASE_URL)).toEqual({
 			kind: "api-key",
 			apiKey: "file-key",
@@ -128,7 +128,7 @@ describe("resolveCredential precedence", () => {
 
 	it("prefers FRAMEDASH_API_KEY env over a stored OAuth token", () => {
 		process.env.FRAMEDASH_API_KEY = "env-key";
-		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON);
 		expect(resolveCredential({}, BASE_URL)).toEqual({
 			kind: "api-key",
 			apiKey: "env-key",
@@ -138,7 +138,7 @@ describe("resolveCredential precedence", () => {
 	});
 
 	it("falls back to the stored OAuth token for the base URL origin", () => {
-		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON);
 		expect(resolveCredential({}, "https://app.framedash.dev/nested/path")).toEqual({
 			kind: "oauth",
 			origin: "https://app.framedash.dev",
@@ -152,12 +152,12 @@ describe("resolveCredential precedence", () => {
 	});
 
 	it("ignores stored tokens for a different origin", () => {
-		vi.mocked(readFileSync).mockReturnValue(STORE_JSON as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue(STORE_JSON);
 		expect(resolveCredential({}, "https://other.framedash.dev")).toBeUndefined();
 	});
 
 	it("treats a corrupt token store as no credential", () => {
-		vi.mocked(readFileSync).mockReturnValue("{corrupt!" as unknown as Buffer);
+		vi.mocked(readFileSync).mockReturnValue("{corrupt!");
 		expect(resolveCredential({}, BASE_URL)).toBeUndefined();
 	});
 
