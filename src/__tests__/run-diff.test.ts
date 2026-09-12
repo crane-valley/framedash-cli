@@ -71,7 +71,7 @@ afterEach(() => {
 it("prints inconclusive evidence and returns a distinct non-success exit code", async () => {
 	get.mockResolvedValue({
 		status: "inconclusive",
-		reasons: ["baseline_not_complete"],
+		reasons: ["baseline_not_complete", "candidate_not_complete"],
 		baseline: { runId: BASE, status: "missing", reasons: ["no_records_in_window"] },
 		candidate: { runId: CANDIDATE, status: "missing", reasons: ["no_records_in_window"] },
 		windowDays: 7,
@@ -204,5 +204,53 @@ it("rejects a measured duration longer than the run wall time", async () => {
 	const data = comparable();
 	data.baseline.durationMs = 18000;
 	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it.each([
+	1, 8000, 1000000,
+])("rejects duration %d inconsistent with quantile evidence", async (durationMs) => {
+	const data = comparable();
+	data.baseline.durationMs = durationMs;
+	data.baseline.endedAtUs = "2000000000";
+	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it("rejects hitch counts above the quantile rank limit", async () => {
+	const data = comparable();
+	data.baseline.hitches = completeRun(BASE).hitches.map((hitch) => ({
+		...hitch,
+		count: 1000,
+		per1000Frames: 1000,
+	}));
+	get.mockResolvedValue(data);
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it("rejects hitch counts below the quantile rank limit", async () => {
+	const baseline = completeRun(BASE);
+	baseline.quantiles.p99 = [100, 104];
+	baseline.durationMs = 17000;
+	baseline.endedAtUs = "19000000";
+	get.mockResolvedValue({
+		...comparePerformanceRuns(baseline, completeRun(CANDIDATE)),
+		windowDays: 7,
+	});
+	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
+});
+
+it.each([
+	{ reasons: ["unrelated_failure"] },
+	{ reasons: ["baseline_not_complete"] },
+	{ reasons: ["baseline_not_complete", "baseline_not_complete"] },
+])("rejects inconclusive reasons inconsistent with run evidence: $reasons", async ({ reasons }) => {
+	get.mockResolvedValue({
+		status: "inconclusive",
+		reasons,
+		baseline: { runId: BASE, status: "missing", reasons: ["no_records_in_window"] },
+		candidate: { runId: CANDIDATE, status: "missing", reasons: ["no_records_in_window"] },
+		windowDays: 7,
+	});
 	await expect(runDiff(["--baseline", BASE, "--candidate", CANDIDATE])).rejects.toThrow("response");
 });

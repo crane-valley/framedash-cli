@@ -61,6 +61,41 @@ const hitches = z
 				value.count <= (values[i - 1]?.count ?? PERFORMANCE_RUN_MAX_SAMPLES),
 		),
 	);
+
+function consistentFrameEvidence(run: {
+	samples: number;
+	durationMs: number;
+	quantiles: z.infer<typeof quantiles>;
+	hitches: z.infer<typeof hitches>;
+}) {
+	const { samples, durationMs, quantiles: values } = run;
+	const p50 = Math.ceil(samples * 0.5);
+	const p95 = Math.ceil(samples * 0.95);
+	const p99 = Math.ceil(samples * 0.99);
+	// Nearest-rank intervals bound every sorted frame between successive ranks.
+	const lower =
+		values.p50[0] * (p95 - p50) + values.p95[0] * (p99 - p95) + values.p99[0] * (samples - p99 + 1);
+	const upper =
+		values.p50[1] * p50 +
+		values.p95[1] * (p95 - p50) +
+		values.p99[1] * (p99 - p95) +
+		32768 * (samples - p99);
+	const tolerance = Math.max(1, durationMs * 0.000001);
+	if (durationMs + tolerance < lower || durationMs - tolerance > upper) return false;
+	const ranked = [
+		{ rank: p50, interval: values.p50 },
+		{ rank: p95, interval: values.p95 },
+		{ rank: p99, interval: values.p99 },
+	];
+	return run.hitches.every((hitch) =>
+		ranked.every(
+			({ rank, interval: [lower, upper] }) =>
+				(upper > hitch.thresholdMs || hitch.count <= samples - rank) &&
+				(lower <= hitch.thresholdMs || hitch.count >= samples - rank + 1),
+		),
+	);
+}
+
 const complete = z
 	.looseObject({
 		status: z.literal("complete"),
@@ -87,7 +122,8 @@ const complete = z
 					hitch.count <= run.samples &&
 					Math.abs(hitch.per1000Frames - (hitch.count * 1000) / run.samples) < 1e-9,
 			),
-	);
+	)
+	.refine(consistentFrameEvidence);
 const run = z
 	.looseObject({
 		runId: z.string().refine(isPerformanceRunId),
@@ -130,7 +166,13 @@ export function isPerformanceRunResponse(value: unknown): value is PerformanceRu
 	const expected = comparePerformanceRuns(result.baseline, result.candidate, result.repeat);
 	if (result.status !== expected.status) return false;
 	if (result.status === "inconclusive")
-		return result.reasons.length > 0 && !result.quantiles && !result.repeatVariation;
+		return (
+			result.reasons.length === expected.reasons.length &&
+			new Set(result.reasons).size === result.reasons.length &&
+			result.reasons.every((reason) => expected.reasons.includes(reason)) &&
+			!result.quantiles &&
+			!result.repeatVariation
+		);
 	if (result.reasons.length || !result.quantiles) return false;
 	const same = (a: number[] | undefined, b: number[] | undefined) =>
 		a === undefined || b === undefined ? a === b : a[0] === b[0] && a[1] === b[1];
