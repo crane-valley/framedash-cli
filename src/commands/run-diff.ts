@@ -1,6 +1,7 @@
-import { isPerformanceRunId, type PerformanceRunComparison } from "@framedash/api-client";
+import { isPerformanceRunId } from "@framedash/api-client";
 import { formatOutput } from "../lib/formatters.js";
 import { log } from "../lib/logger.js";
+import { isPerformanceRunResponse, RUN_QUANTILES } from "../lib/performance-run-response.js";
 import { runCommand } from "../lib/run-command.js";
 
 const HELP = `Usage: framedash run-diff --baseline <run-uuid> --candidate <run-uuid> [options]
@@ -41,31 +42,14 @@ export async function runDiff(args: string[]): Promise<void> {
 				);
 			}
 			const params = new URLSearchParams({ baseline, candidate, ...(repeat && { repeat }) });
-			const result = await client.get<PerformanceRunComparison>(
+			const result = await client.get<unknown>(
 				client.projectPath(`performance-runs/compare?${params}`),
 			);
-			const interval = (value: unknown) =>
-				Array.isArray(value) &&
-				value.length === 2 &&
-				value.every((v) => typeof v === "number" && Number.isFinite(v)) &&
-				value[0] <= value[1];
 			if (
-				!result ||
-				!["comparable", "inconclusive"].includes(result.status) ||
-				!Array.isArray(result.reasons) ||
+				!isPerformanceRunResponse(result) ||
 				result.baseline?.runId !== baseline ||
 				result.candidate?.runId !== candidate ||
-				result.repeat?.runId !== repeat ||
-				(result.status === "comparable" &&
-					["p50", "p95", "p99"].some((q) => {
-						const metric = result.quantiles?.[q as "p50" | "p95" | "p99"];
-						return (
-							!metric ||
-							!interval(metric.baseline) ||
-							!interval(metric.candidate) ||
-							!interval(metric.deltaMs)
-						);
-					}))
+				result.repeat?.runId !== repeat
 			)
 				throw new Error("Unexpected response from performance-runs/compare");
 			if (config.format === "json") log(formatOutput(result, "json"));
@@ -79,12 +63,12 @@ export async function runDiff(args: string[]): Promise<void> {
 			else
 				log(
 					formatOutput(
-						Object.entries(result.quantiles ?? {}).map(([metric, value]) => ({
+						RUN_QUANTILES.map((metric) => ({
 							metric,
 							unit: "ms",
-							baseline: value.baseline.join(".."),
-							candidate: value.candidate.join(".."),
-							delta: value.deltaMs.join(".."),
+							baseline: result.quantiles[metric].baseline.join(".."),
+							candidate: result.quantiles[metric].candidate.join(".."),
+							delta: result.quantiles[metric].deltaMs.join(".."),
 						})),
 						config.format,
 					),

@@ -6,7 +6,9 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
-## [0.1.11] - 2026-09-12
+## [0.1.11] - Publication pending
+
+Prepared in source; public mirror and npm publication are not yet verified.
 
 ### Added
 
@@ -17,6 +19,9 @@ All notable changes to `@framedash/cli` are documented here. This project follow
   Unity SDK 0.1.8 and the matching endpoint; COPPA-enabled organizations cannot
   use it. Existing `perf-diff` and `run-profile-test` gates are unchanged.
 - Uses API client 0.1.6 for the new run contract.
+- Validates required run evidence and comparison consistency before reporting
+  success. Table/CSV output uses supported quantiles while tolerating additive
+  response fields.
 
 ## [0.1.10] - 2026-09-07
 
