@@ -6,9 +6,12 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
-## [0.1.11] - Publication pending
+## [0.1.11] - 2026-09-12
 
-Prepared in source; public mirror and npm publication are not yet verified.
+Published through the public mirror's [OIDC release workflow](https://github.com/crane-valley/framedash-cli/actions/runs/34701431079)
+on 2026-09-12 UTC. Registry artifact integrity and SLSA provenance were verified.
+The registry-installed command preserves actual Unity probe evidence through a
+local read adapter; this does not prove production ingestion or customer value.
 
 ### Added
 
