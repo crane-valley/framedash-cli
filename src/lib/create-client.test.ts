@@ -115,7 +115,7 @@ describe("createClient", () => {
 	it.each([
 		"api-key",
 		"oauth",
-	])("allows %s query requests 240s while other requests retain 30s", async (kind) => {
+	])("configures %s Query transport for 240s and other requests for 30s", async (kind) => {
 		const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(apiSuccess([])));
 		vi.stubGlobal("fetch", fetchMock);
 		const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
