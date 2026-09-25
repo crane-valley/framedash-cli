@@ -82,7 +82,7 @@ export function createClient(
 			baseUrl,
 			apiKey: credential.apiKey,
 			projectId,
-			queryTimeoutMs: 120_000,
+			queryTimeoutMs: 240_000,
 			onError,
 		});
 	}
@@ -148,7 +148,7 @@ class OAuthApiClient extends ApiClient {
 			baseUrl: this.oauthBaseUrl,
 			projectId: this.oauthProjectId,
 			accessToken,
-			queryTimeoutMs: 120_000,
+			queryTimeoutMs: 240_000,
 			onError: (err): never => {
 				throw err;
 			},

@@ -112,6 +112,26 @@ describe("createClient", () => {
 		expect(requestHeader(init, "X-API-Key")).toBeUndefined();
 	});
 
+	it.each([
+		"api-key",
+		"oauth",
+	])("configures %s Query transport for 240s and other requests for 30s", async (kind) => {
+		const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(apiSuccess([])));
+		vi.stubGlobal("fetch", fetchMock);
+		const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+		const credential: CliCredential =
+			kind === "api-key"
+				? { kind: "api-key", apiKey: "fd_test_key", source: "env" }
+				: oauthCredential(3_600_000);
+		const client = createClient(BASE_URL, credential, "proj-1");
+
+		await client.post("/api/v1/query", { sql: "SELECT 1" });
+		await client.get("/api/v1/projects");
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(timeoutSpy.mock.calls.map(([duration]) => duration)).toEqual([240_000, 30_000]);
+	});
+
 	it("proactively refreshes a token that expires within 60s and persists rotation", async () => {
 		await saveStoredEntry(ORIGIN, oauthCredential(30_000).entry);
 		const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
