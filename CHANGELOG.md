@@ -6,6 +6,13 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-09-25
+
+### Fixed
+
+- Extend Query requests from 120 to 240 seconds for ClickHouse idle resume,
+  covering API-key and OAuth authentication. Other requests retain 30 seconds.
+
 ## [0.1.11] - 2026-09-12
 
 Published through the public mirror's [OIDC release workflow](https://github.com/crane-valley/framedash-cli/actions/runs/34701431079)
