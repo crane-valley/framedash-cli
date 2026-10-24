@@ -55,7 +55,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           # OIDC trusted publishing requires Node >= 22.14 and npm >= 11.5.1.
-          node-version: "22.14.0"
+          node-version: "22.23.4"
       - name: Use npm with OIDC support (pinned 11.x line, >= 11.5.1)
         run: npm install -g npm@11.18.0
       # npm install (not ci): the mirror ships no package-lock.json. For cli /
