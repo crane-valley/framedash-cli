@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mapCapture } from "../commands/map-capture.js";
+import { mapCapture, mapCaptureCommand } from "../commands/map-capture.js";
 
 const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -216,5 +216,42 @@ describe("mapCapture", () => {
 		});
 		expect(result).toEqual({ ok: true, successCount: 1, errorCount: 0 });
 		expect(stdoutWrite).toHaveBeenCalledWith(expect.stringContaining("1 succeeded, 0 failed"));
+	});
+});
+
+describe("mapCaptureCommand base URL", () => {
+	async function uploadedOrigin(args: string[]): Promise<string> {
+		await writeFile(join(tempDir, "map.json"), validSidecar());
+		await writeFile(join(tempDir, "test.png"), TINY_PNG);
+		vi.stubEnv("FRAMEDASH_API_KEY", "fd_map_capture_fixture");
+		vi.stubEnv("FRAMEDASH_PROJECT_ID", "00000000-0000-4000-8000-000000000000");
+		const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 500 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		try {
+			await mapCaptureCommand(["--input-dir", tempDir, "--upload", ...args]);
+			return new URL(String(fetchMock.mock.calls[0]?.[0])).origin;
+		} finally {
+			exit.mockRestore();
+			vi.unstubAllGlobals();
+			vi.unstubAllEnvs();
+		}
+	}
+
+	it("uses FRAMEDASH_BASE_URL when the flag is absent", async () => {
+		vi.stubEnv("FRAMEDASH_BASE_URL", "https://analytics.example.test");
+		expect(await uploadedOrigin([])).toBe("https://analytics.example.test");
+	});
+
+	it("prefers --base-url over FRAMEDASH_BASE_URL", async () => {
+		vi.stubEnv("FRAMEDASH_BASE_URL", "https://analytics.example.test");
+		expect(await uploadedOrigin(["--base-url", "https://flag.example.test"])).toBe(
+			"https://flag.example.test",
+		);
+	});
+
+	it("still defaults to the hosted service", async () => {
+		vi.stubEnv("FRAMEDASH_BASE_URL", "");
+		expect(await uploadedOrigin([])).toBe("https://app.framedash.dev");
 	});
 });

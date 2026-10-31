@@ -6,6 +6,22 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
+### Fixed
+
+- `map-capture` now honors `FRAMEDASH_BASE_URL` when `--base-url` is absent,
+  like every other command. Uploads to a self-hosted instance previously went
+  to the hosted service unless the flag was set.
+- Require Zod 4.6.6 or later for the reviewed validation security fix.
+
+### Changed
+
+- **Breaking:** Require Node.js 22 or later (`engines.node` `>=22.0.0`). This
+  breaks Node 20 users: Node.js 20 reached end of life and does not
+  receive the CVE-2026-111497 fix; on Node 20 npm warns (EBADENGINE) and
+  support is no longer tested. Upgrade to Node.js 22.23.4+ or 24.22.1+.
+
 ## [0.1.12] - 2026-09-25
 
 ### Fixed

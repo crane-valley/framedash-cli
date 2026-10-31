@@ -58,6 +58,13 @@ describe("mapCaptureMetadataSchema", () => {
 		expect(result.success).toBe(false);
 	});
 
+	it("limits map_id in UTF-16 units like the upload API", () => {
+		const data = { ...validSidecar(), map_id: "😀".repeat(65) };
+		expect(mapCaptureMetadataSchema.safeParse(data).success).toBe(false);
+		const fits = { ...validSidecar(), map_id: "😀".repeat(64) };
+		expect(mapCaptureMetadataSchema.safeParse(fits).success).toBe(true);
+	});
+
 	it("rejects empty image_path", () => {
 		const data = { ...validSidecar(), image_path: "" };
 		const result = mapCaptureMetadataSchema.safeParse(data);
@@ -137,6 +144,21 @@ describe("mapCaptureMetadataSchema", () => {
 		};
 		const result = mapCaptureMetadataSchema.safeParse(data);
 		expect(result.success).toBe(false);
+	});
+
+	it("keeps accepting the captured_at precisions earlier releases accepted", () => {
+		for (const captured_at of [
+			"2026-02-15T10:30Z",
+			"2026-02-15T10:30:00Z",
+			"2026-02-15T10:30:00.123456Z",
+		]) {
+			const result = mapCaptureMetadataSchema.safeParse({ ...validSidecar(), captured_at });
+			expect(result.success, captured_at).toBe(true);
+		}
+		for (const captured_at of ["2026-02-15", "2026-02-15T10Z", "2026-02-15T10:30:00+09:00"]) {
+			const result = mapCaptureMetadataSchema.safeParse({ ...validSidecar(), captured_at });
+			expect(result.success, captured_at).toBe(false);
+		}
 	});
 
 	it("rejects invalid captured_at format", () => {
