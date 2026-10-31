@@ -24,7 +24,11 @@ const worldBoundsSchema = z
 
 export const mapCaptureMetadataSchema = z.object({
 	version: z.literal("1.0"),
-	map_id: z.string().min(1).max(MAX_MAP_ID_LEN),
+	// Zod 4.6 counts code points; the upload API limits map IDs in UTF-16 units.
+	map_id: z
+		.string()
+		.min(1)
+		.refine((value) => value.length <= MAX_MAP_ID_LEN),
 	image_path: z.string().min(1),
 	image_dimensions: dimensionsSchema,
 	world_bounds: worldBoundsSchema,
@@ -33,7 +37,8 @@ export const mapCaptureMetadataSchema = z.object({
 	coordinate_system: z.string().optional(),
 	engine: z.string().optional(),
 	build_id: z.string().max(255).optional(),
-	captured_at: z.string().datetime().optional(),
+	// Zod 4.6 stopped accepting minute precision by default; earlier releases accepted it.
+	captured_at: z.union([z.string().datetime(), z.string().datetime({ precision: -1 })]).optional(),
 });
 
 export type MapCaptureMetadata = z.infer<typeof mapCaptureMetadataSchema>;

@@ -32,7 +32,7 @@ Upload options (all required together):
   --project-id <uuid>    Target project ID, or set FRAMEDASH_PROJECT_ID env
 
 Optional:
-  --base-url <url>       API base URL (default: https://app.framedash.dev)
+  --base-url <url>       API base URL (default: FRAMEDASH_BASE_URL, then https://app.framedash.dev)
   --dry-run              Validate files without uploading
   --metadata-pattern <glob>
                          Only read matching JSON filenames (for example,
@@ -54,7 +54,7 @@ export async function mapCaptureCommand(args: string[]): Promise<void> {
 			"api-key": { type: "string" },
 			"api-key-file": { type: "string" },
 			"project-id": { type: "string" },
-			"base-url": { type: "string", default: "https://app.framedash.dev" },
+			"base-url": { type: "string" },
 			"metadata-pattern": { type: "string" },
 			upload: { type: "boolean", default: false },
 			"dry-run": { type: "boolean", default: false },
@@ -72,7 +72,8 @@ export async function mapCaptureCommand(args: string[]): Promise<void> {
 	// dry run with --api-key-file - does not block on stdin (or fail on a missing
 	// file) for a credential it never uses.
 	const willUpload = Boolean(values.upload) && !values["dry-run"];
-	const baseUrl = values["base-url"] ?? "https://app.framedash.dev";
+	const baseUrl =
+		values["base-url"] || process.env.FRAMEDASH_BASE_URL || "https://app.framedash.dev";
 	const result = await mapCapture({
 		inputDir: values["input-dir"],
 		upload: values.upload,
