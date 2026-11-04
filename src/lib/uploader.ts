@@ -44,10 +44,15 @@ export async function uploadMapCapture(opts: UploadOptions): Promise<UploadResul
 	const formData = new FormData();
 	formData.set("mapId", opts.metadata.map_id);
 	formData.set("name", opts.metadata.map_id);
-	formData.set("worldMinX", String(opts.metadata.world_bounds.min.x));
-	formData.set("worldMinY", String(opts.metadata.world_bounds.min.y));
-	formData.set("worldMaxX", String(opts.metadata.world_bounds.max.x));
-	formData.set("worldMaxY", String(opts.metadata.world_bounds.max.y));
+	const { min, max } = opts.metadata.world_bounds;
+	const yUp = opts.metadata.up_axis === "y";
+	formData.set("worldMinX", String(min.x));
+	formData.set("worldMinY", String(yUp ? min.z : min.y));
+	formData.set("worldMaxX", String(max.x));
+	formData.set("worldMaxY", String(yUp ? max.z : max.y));
+	if (opts.metadata.up_axis) {
+		formData.set("upAxis", opts.metadata.up_axis);
+	}
 	formData.set("imageWidth", String(opts.metadata.image_dimensions.width));
 	formData.set("imageHeight", String(opts.metadata.image_dimensions.height));
 
