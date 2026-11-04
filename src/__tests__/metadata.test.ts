@@ -122,6 +122,40 @@ describe("mapCaptureMetadataSchema", () => {
 		expect(result.success).toBe(false);
 	});
 
+	it("checks the X/Z ground bounds of a Y-up sidecar and leaves Y as height", () => {
+		const yUp = {
+			...validSidecar(),
+			version: "1.1",
+			up_axis: "y",
+			world_bounds: {
+				min: { x: -100, y: 5, z: -50 },
+				max: { x: 100, y: 5, z: 50 },
+			},
+		};
+		expect(mapCaptureMetadataSchema.safeParse(yUp).success).toBe(true);
+		expect(
+			mapCaptureMetadataSchema.safeParse({
+				...yUp,
+				world_bounds: { min: { x: -100, y: 0, z: 50 }, max: { x: 100, y: 10, z: 50 } },
+			}).success,
+		).toBe(false);
+	});
+
+	it("rejects an unknown up_axis", () => {
+		const result = mapCaptureMetadataSchema.safeParse({
+			...validSidecar(),
+			version: "1.1",
+			up_axis: "x",
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects up_axis on a 1.0 sidecar, which older CLIs would upload with X/Y bounds", () => {
+		const result = mapCaptureMetadataSchema.safeParse({ ...validSidecar(), up_axis: "z" });
+		expect(result.success).toBe(false);
+		expect(result.error?.issues[0]?.message).toBe('up_axis requires "version": "1.1"');
+	});
+
 	it("rejects NaN in world bounds", () => {
 		const data = {
 			...validSidecar(),

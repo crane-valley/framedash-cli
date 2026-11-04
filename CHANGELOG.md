@@ -6,6 +6,16 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
+### Added
+
+- `framedash map-capture`: support sidecar version "1.1" with an optional
+  `up_axis` ("y" | "z"), uploading Y-up ground bounds as X = x and Y = z.
+  Version "1.0" sidecars specifying `up_axis` are rejected because older CLIs
+  strip unknown keys and would upload a Y-up sidecar's X/Y bounds, and they
+  reject version "1.1". Dry run prints `up_axis=y, ` and the ground bounds.
+
 ## [0.2.0] - 2026-10-31
 
 ### Fixed

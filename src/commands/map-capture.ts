@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { resolveCredential } from "../lib/config.js";
 import { getSharedOAuthManager } from "../lib/create-client.js";
 import { error, log, success } from "../lib/logger.js";
-import { mapCaptureMetadataSchema } from "../lib/metadata.js";
+import { type MapCaptureMetadata, mapCaptureMetadataSchema } from "../lib/metadata.js";
 import { type UploadCredential, uploadMapCapture } from "../lib/uploader.js";
 
 const ALLOWED_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -195,8 +195,7 @@ async function processMapCaptureFile(
 			success(
 				`${jsonFile}: map_id=${metadata.map_id}, ` +
 					`image=${metadata.image_path}, ` +
-					`bounds=[${metadata.world_bounds.min.x},${metadata.world_bounds.min.y}]` +
-					`→[${metadata.world_bounds.max.x},${metadata.world_bounds.max.y}], ` +
+					formatGroundBounds(metadata) +
 					`size=${metadata.image_dimensions.width}x${metadata.image_dimensions.height}`,
 			);
 			return true;
@@ -308,4 +307,10 @@ function matchesFilenamePattern(filename: string, pattern: string | undefined): 
 		else source += char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 	}
 	return new RegExp(`^${source}$`, "i").test(filename);
+}
+
+function formatGroundBounds({ world_bounds: { min, max }, up_axis }: MapCaptureMetadata): string {
+	const [minY, maxY] = up_axis === "y" ? [min.z, max.z] : [min.y, max.y];
+	const axis = up_axis ? `up_axis=${up_axis}, ` : "";
+	return `${axis}bounds=[${min.x},${minY}]→[${max.x},${maxY}], `;
 }
