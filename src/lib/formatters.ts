@@ -123,7 +123,9 @@ function renderRows(rows: Record<string, unknown>[], keys: string[]): string {
 	if (rows.length === 0 || keys.length === 0) return "(no data)";
 	const headings = keys.map((k) => escapeControlChars(k));
 	const cells = rows.map((row) => keys.map((k) => tableCell(row[k])));
-	const widths = headings.map((h, i) => Math.max(h.length, ...cells.map((r) => r[i]?.length ?? 0)));
+	const widths = headings.map((heading, index) =>
+		cells.reduce((width, row) => Math.max(width, row[index]?.length ?? 0), heading.length),
+	);
 
 	const header = headings.map((h, i) => h.padEnd(widths[i] ?? h.length)).join("  ");
 	const separator = widths.map((w) => "-".repeat(w)).join("  ");

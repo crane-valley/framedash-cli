@@ -15,6 +15,19 @@ describe("formatOutput", () => {
 	});
 
 	describe("table format", () => {
+		it("renders and aligns 150,000 rows without a RangeError", () => {
+			const rows = Array.from({ length: 150_000 }, (_, index) => ({
+				id: String(index),
+				name: index === 149_999 ? "longest name" : "x",
+			}));
+			const lines = formatOutput(rows, "table").split("\n");
+			expect(lines).toHaveLength(150_002);
+			expect(lines[0]).toBe("id      name        ");
+			expect(lines[1]).toBe("------  ------------");
+			expect(lines[2]).toBe("0       x           ");
+			expect(lines.at(-1)).toBe("149999  longest name");
+		});
+
 		it("formats array of objects as aligned table", () => {
 			const data = [
 				{ id: "1", name: "Alice" },

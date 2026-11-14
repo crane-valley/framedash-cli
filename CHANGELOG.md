@@ -19,6 +19,7 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 ### Fixed
 
 - `map-capture --help` documents sidecar version 1.1 and `up_axis` Y/Z ground planes.
+- Large tables no longer exceed JavaScript's argument-count limit while measuring column widths.
 
 - `--format table` and `--format csv` print control characters in cells as
   `\uXXXX` escapes (CSV keeps tab), and status lines on stderr do the same, so
