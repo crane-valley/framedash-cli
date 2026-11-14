@@ -161,6 +161,12 @@ it.each([
 	expect(log).not.toHaveBeenCalledWith(expect.stringContaining("futureMetadata"));
 });
 
+it("emits negative-bound CSV intervals without the formula-injection prefix", async () => {
+	get.mockResolvedValue(comparable());
+	await runDiff(["--baseline", BASE, "--candidate", CANDIDATE, "--format", "csv"]);
+	expect(log).toHaveBeenCalledWith(expect.stringContaining("\np50,ms,16..17,16..17,-1..1\n"));
+});
+
 it("rejects reversed quantiles even when comparison intervals match them", async () => {
 	const baseline = completeRun(BASE);
 	baseline.quantiles.p50 = [30, 31];

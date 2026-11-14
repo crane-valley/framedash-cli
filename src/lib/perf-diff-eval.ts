@@ -71,8 +71,8 @@ export interface ApiMetricDiff {
 }
 
 export interface ApiBuildComparison {
-	baseline: { build_id: string };
-	candidate: { build_id: string };
+	baseline: { build_id: string; sample_count?: number; session_count?: number };
+	candidate: { build_id: string; sample_count?: number; session_count?: number };
 	diffs: ApiMetricDiff[];
 }
 

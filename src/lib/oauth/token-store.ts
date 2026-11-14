@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 // Layout: a single JSON file keyed by API base-URL ORIGIN:   { "<origin>": { access_token,
 // refresh_token, expires_at, scope } } at $XDG_CONFIG_HOME/framedash/credentials.json,
@@ -39,7 +39,9 @@ export type TokenStore = Record<string, StoredTokenEntry>;
 
 export function credentialsFilePath(): string {
 	const xdg = process.env.XDG_CONFIG_HOME;
-	const configHome = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".config");
+	// The XDG Base Directory spec says relative values must be ignored; honoring one would write
+	// credentials under the current directory, possibly a repository checkout.
+	const configHome = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".config");
 	return join(configHome, "framedash", "credentials.json");
 }
 

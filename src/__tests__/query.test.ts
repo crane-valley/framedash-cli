@@ -197,6 +197,23 @@ describe("query command", () => {
 		expect(output).toContain("purchase,25");
 	});
 
+	it("formats the real { rows, rowCount } response as CSV rows when --format csv", async () => {
+		const result = {
+			rows: [
+				{ event_name: "login", count: 100 },
+				{ event_name: "purchase", count: 25 },
+			],
+			rowCount: 2,
+		};
+		const client = mockClient({ post: vi.fn().mockResolvedValue(result) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+
+		await query(["SELECT 1", "--format", "csv"]);
+
+		const output = vi.mocked(loggerModule.log).mock.calls[0]?.[0] ?? "";
+		expect(output).toBe("event_name,count\nlogin,100\npurchase,25");
+	});
+
 	it("shows help with --help", async () => {
 		await query(["--help"]);
 

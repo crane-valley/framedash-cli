@@ -17,6 +17,11 @@ Upload captured map images and metadata to Framedash SaaS.
 Reads JSON sidecar metadata files from --input-dir, validates them,
 and optionally uploads the associated images to the Framedash API.
 
+Sidecar metadata:
+  Versions 1.0 and 1.1 are supported. Include "version": "1.1" when setting
+  up_axis to "y" or "z". Y-up (Unity/Godot) uses X/Z ground bounds; Z-up
+  uses X/Y. Omitting up_axis preserves the legacy X/Y ground plane.
+
 Required:
   --input-dir <path>     Directory containing JSON metadata files and images
 

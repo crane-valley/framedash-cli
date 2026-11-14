@@ -36,7 +36,7 @@ export function resolveBaseAndFormat(values: Record<string, unknown>): {
 } {
 	const baseUrl =
 		(values["base-url"] as string | undefined) ??
-		process.env.FRAMEDASH_BASE_URL ??
+		nonBlankEnv("FRAMEDASH_BASE_URL") ??
 		"https://app.framedash.dev";
 
 	// The API key is sent on every request; refuse a base URL that would expose
@@ -48,13 +48,20 @@ export function resolveBaseAndFormat(values: Record<string, unknown>): {
 		process.exit(1);
 	}
 
-	const formatStr = (values.format as string | undefined) ?? process.env.FRAMEDASH_FORMAT ?? "json";
+	const formatStr =
+		(values.format as string | undefined) ?? nonBlankEnv("FRAMEDASH_FORMAT") ?? "json";
 	if (formatStr !== "json" && formatStr !== "table" && formatStr !== "csv") {
 		error(`Invalid format: ${formatStr}. Use json, table, or csv.`);
 		process.exit(1);
 	}
 
 	return { baseUrl, format: formatStr };
+}
+
+// GitHub Actions expands an unset `vars.X` to an empty string, which must not override the default.
+function nonBlankEnv(name: string): string | undefined {
+	const value = process.env[name];
+	return value?.trim() ? value : undefined;
 }
 
 /**
@@ -65,10 +72,33 @@ export function resolveApiKey(values: Record<string, unknown>): string | undefin
 	return resolveApiKeyWithSource(values)?.apiKey;
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const CONTROL_CHAR = /[\x00-\x1f\x7f]/;
+
+const API_KEY_SOURCE_LABEL: Record<ApiKeySource, string> = {
+	flag: "--api-key",
+	file: "--api-key-file",
+	env: "FRAMEDASH_API_KEY",
+};
+
 export function resolveApiKeyWithSource(
 	values: Record<string, unknown>,
 ): { apiKey: string; source: ApiKeySource } | undefined {
-	const flag = values["api-key"] as string | undefined;
+	const resolved = readApiKey(values);
+	if (resolved && CONTROL_CHAR.test(resolved.apiKey)) {
+		// undici's invalid-header error embeds the full key, and the top-level catch prints it.
+		error(
+			`API key from ${API_KEY_SOURCE_LABEL[resolved.source]} contains a control character (e.g. an embedded newline); check how the secret was stored`,
+		);
+		process.exit(1);
+	}
+	return resolved;
+}
+
+function readApiKey(
+	values: Record<string, unknown>,
+): { apiKey: string; source: ApiKeySource } | undefined {
+	const flag = (values["api-key"] as string | undefined)?.trim();
 	if (flag) return { apiKey: flag, source: "flag" };
 
 	const file = values["api-key-file"] as string | undefined;
@@ -96,7 +126,7 @@ export function resolveApiKeyWithSource(
 		return { apiKey: key, source: "file" };
 	}
 
-	const envKey = process.env.FRAMEDASH_API_KEY;
+	const envKey = process.env.FRAMEDASH_API_KEY?.trim();
 	return envKey ? { apiKey: envKey, source: "env" } : undefined;
 }
 
@@ -115,6 +145,10 @@ export function resolveCredential(
 
 	const origin = new URL(baseUrl).origin;
 	const entry = readStoredEntry(origin);
+	if (entry && CONTROL_CHAR.test(entry.access_token)) {
+		error(`Stored login for ${origin} has a malformed access token; run 'framedash login' again`);
+		process.exit(1);
+	}
 	if (entry) return { kind: "oauth", origin, entry };
 
 	return undefined;

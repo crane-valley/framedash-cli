@@ -7,7 +7,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -53,6 +53,15 @@ describe("token store", () => {
 
 	it("honors XDG_CONFIG_HOME in the credentials path", () => {
 		expect(credentialsFilePath()).toBe(join(configHome, "framedash", "credentials.json"));
+	});
+
+	it.each([
+		".config",
+		"config",
+		"./x",
+	])("ignores a relative XDG_CONFIG_HOME (%s) and uses ~/.config", (value) => {
+		process.env.XDG_CONFIG_HOME = value;
+		expect(credentialsFilePath()).toBe(join(homedir(), ".config", "framedash", "credentials.json"));
 	});
 
 	it("round-trips an entry keyed by origin", async () => {
