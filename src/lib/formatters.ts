@@ -1,4 +1,5 @@
 import type { OutputFormat } from "./config.js";
+import { escapeControlChars } from "./control-chars.js";
 
 export function formatOutput(data: unknown, format: OutputFormat): string {
 	switch (format) {
@@ -37,8 +38,8 @@ function formatTable(data: unknown): string {
 }
 
 /**
- * Only that endpoint returns this shape, so table format can safely unwrap it to tabulate the
- * individual records instead of rendering one giant JSON cell.
+ * Only that endpoint returns this shape, so table and csv formats can safely unwrap it to emit
+ * the individual records instead of rendering one giant JSON cell.
  */
 function isQueryResult(data: unknown): data is { rows: unknown[]; rowCount: number } {
 	if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
@@ -67,9 +68,9 @@ function formatSections(obj: Record<string, unknown>): string {
 		} else if (value !== null && typeof value === "object") {
 			table = formatObjectSection(value as Record<string, unknown>);
 		} else {
-			table = cellString(value);
+			table = tableCell(value);
 		}
-		return `## ${key}\n${table}`;
+		return `## ${escapeControlChars(key)}\n${table}`;
 	});
 	return sections.join("\n\n");
 }
@@ -120,18 +121,24 @@ function unionKeys(rows: Record<string, unknown>[]): string[] {
 
 function renderRows(rows: Record<string, unknown>[], keys: string[]): string {
 	if (rows.length === 0 || keys.length === 0) return "(no data)";
-	const widths = keys.map((k) => Math.max(k.length, ...rows.map((r) => cellString(r[k]).length)));
+	const headings = keys.map((k) => escapeControlChars(k));
+	const cells = rows.map((row) => keys.map((k) => tableCell(row[k])));
+	const widths = headings.map((h, i) => Math.max(h.length, ...cells.map((r) => r[i]?.length ?? 0)));
 
-	const header = keys.map((k, i) => k.padEnd(widths[i] ?? k.length)).join("  ");
+	const header = headings.map((h, i) => h.padEnd(widths[i] ?? h.length)).join("  ");
 	const separator = widths.map((w) => "-".repeat(w)).join("  ");
-	const body = rows
-		.map((row) => keys.map((k, i) => cellString(row[k]).padEnd(widths[i] ?? k.length)).join("  "))
+	const body = cells
+		.map((row) => row.map((cell, i) => cell.padEnd(widths[i] ?? cell.length)).join("  "))
 		.join("\n");
 
 	return `${header}\n${separator}\n${body}`;
 }
 
 function formatCsv(data: unknown): string {
+	if (isQueryResult(data)) {
+		return formatCsv(data.rows);
+	}
+
 	const rows = toRows(data);
 	if (rows.length === 0) return "";
 
@@ -140,9 +147,7 @@ function formatCsv(data: unknown): string {
 
 	const keys = Object.keys(firstRow);
 	const header = keys.map(escapeCsv).join(",");
-	const body = rows
-		.map((row) => keys.map((k) => escapeCsv(cellString(row[k]))).join(","))
-		.join("\n");
+	const body = rows.map((row) => keys.map((k) => escapeCsv(row[k])).join(",")).join("\n");
 
 	return `${header}\n${body}`;
 }
@@ -153,13 +158,26 @@ function cellString(value: unknown): string {
 	return String(value);
 }
 
-function escapeCsv(value: string): string {
-	// Prevent CSV formula injection (OWASP) — also catch whitespace-prefixed formulas
+function tableCell(value: unknown): string {
+	return escapeControlChars(cellString(value));
+}
+
+const NUMBER = String.raw`[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?`;
+// run-diff joins its [lo, hi] millisecond intervals as "lo..hi".
+const NUMERIC_LITERAL_OR_RANGE = new RegExp(`^${NUMBER}(\\.\\.${NUMBER})?$`);
+
+function escapeCsv(raw: unknown): string {
+	let value = escapeControlChars(cellString(raw), { keepTab: true });
+	// OWASP formula-injection guard, whitespace-prefixed too; numbers (even quoted Int64) stay bare.
 	const trimmed = value.trimStart();
-	if (trimmed.length > 0 && /^[=+\-@]/.test(trimmed)) {
+	if (
+		typeof raw === "string" &&
+		/^[=+\-@]/.test(trimmed) &&
+		!NUMERIC_LITERAL_OR_RANGE.test(trimmed.trimEnd())
+	) {
 		value = `'${value}`;
 	}
-	if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
+	if (value.includes(",") || value.includes('"')) {
 		return `"${value.replace(/"/g, '""')}"`;
 	}
 	return value;

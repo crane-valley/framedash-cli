@@ -1,14 +1,14 @@
 import { buildBuildComparePath } from "@framedash/api-client";
 import { formatOutput } from "../lib/formatters.js";
-import { error, log, success } from "../lib/logger.js";
+import { error, info, log, success } from "../lib/logger.js";
 import {
 	type ApiBuildComparison,
-	evaluateRegression,
 	formatMetricDiff,
 	isRegressionMetric,
 	loadTimeMapConflict,
 	type RegressionMetric,
 } from "../lib/perf-diff-eval.js";
+import { comparisonReport, formatComparisonReport } from "../lib/perf-diff-report.js";
 import { runCommand } from "../lib/run-command.js";
 
 export async function perfDiff(args: string[]): Promise<void> {
@@ -80,6 +80,7 @@ export async function perfDiff(args: string[]): Promise<void> {
 						days: values.days as string | undefined,
 						mapId: values.map as string | undefined,
 						platform: values.platform as string | undefined,
+						fresh: true,
 					}),
 				),
 			);
@@ -91,17 +92,24 @@ export async function perfDiff(args: string[]): Promise<void> {
 				process.exit(1);
 			}
 
-			// Always print the comparison so CI logs carry the numbers. JSON gets the
-			// full object (baseline/candidate stats + diffs); table/csv get the diff rows.
+			const gateEnabled = Boolean(values["fail-on-regression"]);
+			const report = comparisonReport(comparison, {
+				metric,
+				thresholdPct,
+				gateEnabled,
+				days: values.days as string | undefined,
+				mapId: values.map as string | undefined,
+				platform: values.platform as string | undefined,
+			});
+			const { verdict, gate, comparisonContext } = report;
 			if (config.format === "json") {
-				log(formatOutput(comparison, "json"));
+				log(formatOutput({ ...comparison, comparison_context: comparisonContext, gate }, "json"));
 			} else {
 				log(formatOutput(comparison.diffs, config.format));
+				info(formatComparisonReport(comparison, report));
 			}
 
-			if (!values["fail-on-regression"]) return;
-
-			const verdict = evaluateRegression(comparison, { metric, thresholdPct });
+			if (!gateEnabled) return;
 
 			// Fail closed: if --fail-on-regression was requested but nothing was
 			// comparable (wrong build IDs, or the chosen metric has no data on the
@@ -164,6 +172,10 @@ Options:
   --project-id <uuid>    Project ID (or FRAMEDASH_PROJECT_ID env)
   --base-url <url>       API base URL (default: https://app.framedash.dev)
   --format <fmt>         Output format: json, table, csv (default: json)
+                         JSON adds comparison_context and applied gate metadata.
+                         isRegression is directional, not a threshold breach.
+                         Sample/session counts do not establish ingestion readiness
+                         or statistical certainty; null metric causes are unknown.
   -h, --help             Show help
 
 Example (GitHub Actions gate):

@@ -8,6 +8,8 @@ vi.mock("../lib/logger.js", () => ({
 	log: vi.fn(),
 	error: vi.fn(),
 	success: vi.fn(),
+	warn: vi.fn(),
+	info: vi.fn(),
 }));
 
 vi.mock("../lib/create-client.js", () => ({
@@ -77,6 +79,76 @@ describe("builds command", () => {
 });
 
 describe("perf-diff command", () => {
+	it("reports applied threshold separately from directional regression flags and readiness", async () => {
+		const cmp = comparison([diff("frame_time", 3), diff("memory", 0.001), diff("gpu_time", null)]);
+		const client = mockClient({ get: vi.fn().mockResolvedValue(cmp) });
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+		await perfDiff([
+			"--baseline",
+			"a",
+			"--candidate",
+			"b",
+			"--metric",
+			"frame_time",
+			"--threshold",
+			"5",
+			"--fail-on-regression",
+			"--days",
+			"7",
+			"--platform",
+			"linux",
+		]);
+		const output = JSON.parse(vi.mocked(loggerModule.log).mock.calls[0]?.[0] ?? "");
+		expect(output.diffs).toEqual(cmp.diffs);
+		expect(output.gate).toMatchObject({
+			enabled: true,
+			statistic: "P50",
+			metric: "frame_time",
+			threshold_pct: 5,
+			status: "within_threshold",
+			breached_metrics: [],
+		});
+		expect(output.comparison_context).toMatchObject({
+			days: 7,
+			map_id: null,
+			platform: "linux",
+			ingestion_readiness: "not_verified",
+		});
+	});
+
+	it("keeps text/CSV diff rows while sending comparison and gate context to stderr", async () => {
+		const actualLogger = await vi.importActual<typeof loggerModule>("../lib/logger.js");
+		const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		vi.mocked(loggerModule.info).mockImplementation(actualLogger.info);
+		const cmp = comparison([diff("frame_time", 3)]);
+		cmp.baseline.sample_count = 12;
+		cmp.baseline.session_count = 1;
+		cmp.candidate.sample_count = 11;
+		cmp.candidate.session_count = 1;
+		const client = mockClient({
+			get: vi.fn().mockResolvedValue(cmp),
+		});
+		vi.mocked(createClientModule.createClient).mockReturnValue(client);
+		await perfDiff(["--baseline", "a", "--candidate", "b", "--format", "csv", "--threshold", "5"]);
+		expect(vi.mocked(loggerModule.log).mock.calls[0]?.[0] ?? "").toContain(
+			"metric,baselineP50,candidateP50",
+		);
+		expect(loggerModule.info).toHaveBeenCalledWith(
+			expect.stringContaining("gate=not_applied; threshold=5%"),
+		);
+		expect(loggerModule.info).toHaveBeenCalledWith(
+			expect.stringContaining("readiness and expected samples are not verified"),
+		);
+		expect(loggerModule.info).toHaveBeenCalledWith(
+			expect.stringContaining("Baseline samples/sessions=12/1; candidate=11/1"),
+		);
+		expect(loggerModule.warn).not.toHaveBeenCalled();
+		expect(stderrWrite).toHaveBeenCalledOnce();
+		expect(stderrWrite.mock.calls[0]?.[0]).toMatch(/^ {2}P50 comparison:/);
+		stderrWrite.mockRestore();
+		vi.mocked(loggerModule.info).mockReset();
+	});
+
 	it("exits with error when baseline/candidate are missing", async () => {
 		const restore = expectExit();
 		const client = mockClient();
@@ -141,9 +213,11 @@ describe("perf-diff command", () => {
 		await perfDiff(["--baseline", "a", "--candidate", "b", "--days", "30", "--map", "lobby"]);
 
 		expect(client.get).toHaveBeenCalledWith(
-			expect.stringContaining("builds/compare?baseline=a&candidate=b&days=30&mapId=lobby"),
+			expect.stringContaining("builds/compare?baseline=a&candidate=b&days=30&mapId=lobby&fresh=1"),
 		);
-		expect(loggerModule.log).toHaveBeenCalledWith(JSON.stringify(cmp, null, 2));
+		const output = JSON.parse(vi.mocked(loggerModule.log).mock.calls[0]?.[0] ?? "");
+		expect(output).toMatchObject(cmp);
+		expect(output.gate).toMatchObject({ enabled: false, status: "not_applied" });
 		expect(loggerModule.error).not.toHaveBeenCalled();
 	});
 

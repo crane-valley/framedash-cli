@@ -1,6 +1,6 @@
 {
 	"name": "@framedash/cli",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Framedash CLI: game telemetry queries, CI perf-regression gating (perf-diff, run-profile-test), and coding-agent integration for Unity, Unreal Engine 5, and Godot",
 	"keywords": [
 		"game-analytics",
@@ -48,7 +48,7 @@
 		"node": ">=22.0.0"
 	},
 	"dependencies": {
-		"@framedash/api-client": "0.2.0",
+		"@framedash/api-client": "0.2.1",
 		"zod": "^4.6.6"
 	},
 	"devDependencies": {

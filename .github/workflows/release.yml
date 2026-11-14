@@ -4,9 +4,13 @@ name: Release
 # NPM_TOKEN. This mirror repo is PUBLIC, so a provenance attestation is generated
 # and published. Trusted publishing enables provenance by default; --provenance is
 # still passed explicitly on the real publish so the intent is unambiguous.
-# dry_run only builds and packs (npm pack --dry-run) -- it validates the build and
-# tarball contents locally; OIDC auth and provenance are exercised only by the
-# real (dry_run=false) publish.
+# The build job installs dependencies, builds and packs without id-token: write;
+# the publish job holds id-token: write, never installs or builds, and publishes
+# only the packed tarball after checking it against this checkout's package.json.
+# A compromised build dependency can still alter the tarball contents, but it no
+# longer runs where it can mint an OIDC token. dry_run runs both jobs and prints
+# the tarball listing and SHA-256 instead of publishing; OIDC auth and provenance
+# are exercised only by the real (dry_run=false) publish.
 #
 # This file is generated into the mirror by scripts/snapshot-sdk.ps1 in the
 # private monorepo (crane-valley/framedash); edit it there, not here.
@@ -35,13 +39,72 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: Publish to npm (OIDC)
+  build:
+    name: Build and pack
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - name: Refuse to release from a non-default ref
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Release must run on main, not $REF"
+            exit 1
+          fi
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.23.5"
+      - name: Use npm with OIDC support (pinned 11.x line, >= 11.5.1)
+        run: npm install -g npm@11.18.0
+      # npm install (not ci): the mirror ships no package-lock.json. For cli /
+      # mcp-server this resolves @framedash/api-client from the registry (the
+      # mirror manifest pins it to an exact version, not the workspace: protocol).
+      # The mirror packages build from TypeScript only, so dependency postinstall
+      # hooks are not required.
+      - run: npm install --ignore-scripts
+      # So the mirror has no prepack and builds here instead -- dist exists when npm normalizes,
+      # and the bin survives.
+      - run: npm run build
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --json --pack-destination "$RUNNER_TEMP/pack" > "$RUNNER_TEMP/pack.json"
+          FILE=$(node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.length !== 1) process.exit(1); process.stdout.write(r[0].filename);' "$RUNNER_TEMP/pack.json")
+          SHA256=$(sha256sum "$RUNNER_TEMP/pack/$FILE" | cut -d' ' -f1)
+          echo "tarball=$FILE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          {
+            echo "### npm tarball"
+            echo ""
+            echo "- file: \`$FILE\`"
+            echo "- sha256: \`$SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/pack
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish to npm (OIDC)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Refuse to publish from a non-default ref
         env:
@@ -51,35 +114,76 @@ jobs:
             echo "::error::Release must run on main, not $REF"
             exit 1
           fi
+      # Only package.json and server.json are read from this checkout; nothing is
+      # installed or built in the job that holds id-token: write.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           # OIDC trusted publishing requires Node >= 22.14 and npm >= 11.5.1.
           node-version: "22.23.5"
       - name: Use npm with OIDC support (pinned 11.x line, >= 11.5.1)
         run: npm install -g npm@11.18.0
-      # npm install (not ci): the mirror ships no package-lock.json. For cli /
-      # mcp-server this resolves @framedash/api-client from the registry (the
-      # mirror manifest pins it to an exact version, not the workspace: protocol).
-      # Do not run registry package lifecycle scripts in the same job that has
-      # id-token: write for npm Trusted Publishing. The mirror packages build
-      # from TypeScript only, so dependency postinstall hooks are not required.
-      - run: npm install --ignore-scripts
-      # So the mirror has no prepack and builds here instead -- dist exists when npm normalizes,
-      # and the bin survives.
-      - run: npm run build
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-tarball
+      - name: Verify the tarball against this checkout
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          TARBALL_DIR: ${{ runner.temp }}/npm-tarball
+        run: |
+          set -euo pipefail
+          NAME_RE='^[a-z0-9._-]+\.tgz$'
+          SHA_RE='^[0-9a-f]{64}$'
+          if ! [[ "$TARBALL" =~ $NAME_RE ]]; then
+            echo "::error::Unexpected tarball name: $TARBALL"
+            exit 1
+          fi
+          if ! [[ "$SHA256" =~ $SHA_RE ]]; then
+            echo "::error::Unexpected tarball SHA-256 output"
+            exit 1
+          fi
+          (cd "$TARBALL_DIR" && echo "$SHA256  $TARBALL" | sha256sum -c -)
+          tar -tzf "$TARBALL_DIR/$TARBALL" > "$RUNNER_TEMP/tarball-entries.txt"
+          tar -xzOf "$TARBALL_DIR/$TARBALL" package/package.json > "$RUNNER_TEMP/tarball-package.json"
+          node -e '
+            const fs = require("fs");
+            const [checkoutPath, packedPath, entriesPath] = process.argv.slice(1);
+            const checkout = JSON.parse(fs.readFileSync(checkoutPath, "utf8"));
+            const packed = JSON.parse(fs.readFileSync(packedPath, "utf8"));
+            const entries = new Set(fs.readFileSync(entriesPath, "utf8").split("\n").filter(Boolean));
+            const bins = (pkg) => {
+              const raw = typeof pkg.bin === "string" ? { [pkg.name.replace(/^@[^/]+\//, "")]: pkg.bin } : (pkg.bin ?? {});
+              return JSON.stringify(Object.entries(raw).map(([k, v]) => [k, String(v).replace(/^\.\//, "")]).sort());
+            };
+            const fail = (message) => { console.error(`::error::${message}`); process.exit(1); };
+            if (packed.name !== checkout.name) fail(`tarball name ${packed.name} != ${checkout.name}`);
+            if (packed.version !== checkout.version) fail(`tarball version ${packed.version} != ${checkout.version}`);
+            if (bins(packed) !== bins(checkout)) fail("tarball bin differs from package.json");
+            const targets = JSON.parse(bins(checkout)).map(([, target]) => target);
+            for (const target of targets) {
+              if (!entries.has(`package/${target}`)) fail(`bin target ${target} is missing from the tarball`);
+            }
+            console.log(`Verified ${checkout.name}@${checkout.version}; bin targets: ${targets.join(", ") || "(none)"}`);
+          ' "$GITHUB_WORKSPACE/package.json" "$RUNNER_TEMP/tarball-package.json" "$RUNNER_TEMP/tarball-entries.txt"
       - name: Publish via OIDC with provenance
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           REPO: ${{ github.repository }}
+          TARBALL_PATH: ${{ runner.temp }}/npm-tarball/${{ needs.build.outputs.tarball }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = "true" ]; then
-            # npm pack (not npm publish --dry-run): validates build + tarball
-            # contents without the registry round-trip, so it does not fail on an
-            # already-published version. Provenance only applies on a real publish.
-            echo "DRY RUN: build + pack only, no registry write"
-            npm pack --dry-run
+            # Listing the verified tarball (not npm publish --dry-run) avoids the
+            # registry round-trip, so it does not fail on an already-published
+            # version. Provenance only applies on a real publish.
+            echo "DRY RUN: build + pack + verify only, no registry write"
+            tar -tzvf "$TARBALL_PATH"
+            echo "sha256: $SHA256"
           elif [ "$REPO" = "crane-valley/framedash-mcp-server" ]; then
             # Idempotent publish for the mcp-server mirror ONLY. This mirror has a
             # second, separate publish target (the MCP Registry) after npm, so a
@@ -97,10 +201,10 @@ jobs:
             if [ -n "$PUBLISHED" ]; then
               echo "$NAME@$VER already published; skipping npm publish (registry retry path)"
             else
-              npm publish --provenance --access public
+              npm publish "$TARBALL_PATH" --provenance --access public --ignore-scripts
             fi
           else
-            npm publish --provenance --access public
+            npm publish "$TARBALL_PATH" --provenance --access public --ignore-scripts
           fi
       # MCP Registry publish. This template is generated verbatim into every npm
       # mirror, so the following steps are gated to the mcp-server mirror only --

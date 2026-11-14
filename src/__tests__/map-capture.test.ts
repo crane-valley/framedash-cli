@@ -49,6 +49,14 @@ afterEach(async () => {
 });
 
 describe("mapCapture", () => {
+	it("documents version 1.1 up_axis in command help", async () => {
+		await mapCaptureCommand(["--help"]);
+		const help = stdoutWrite.mock.calls.map(([text]) => String(text)).join("");
+		expect(help).toContain('"version": "1.1"');
+		expect(help).toContain("up_axis");
+		expect(help).toContain("X/Z");
+	});
+
 	it("returns failure when --input-dir is missing", async () => {
 		const result = await mapCapture({ ...defaultOpts });
 		expect(result).toEqual({ ok: false, successCount: 0, errorCount: 0 });

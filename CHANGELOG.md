@@ -6,6 +6,54 @@ All notable changes to `@framedash/cli` are documented here. This project follow
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-14
+
+### Added
+
+- `perf-diff` JSON adds `gate` metadata (P50, selected metric, threshold,
+  evaluated/breached metrics and applied status) and `comparison_context`
+  (window, filters, unverified ingestion readiness and unknown null causes).
+  Table/CSV retain their diff rows and send neutral context to stderr. Existing P50
+  defaults, `isRegression` fields and opt-in gate exit behavior are unchanged.
+
+### Fixed
+
+- `map-capture --help` documents sidecar version 1.1 and `up_axis` Y/Z ground planes.
+
+- `--format table` and `--format csv` print control characters in cells as
+  `\uXXXX` escapes (CSV keeps tab), and status lines on stderr do the same, so
+  event names or build IDs can no longer send terminal escape sequences or
+  start a new output line. CSV cells containing a line break now stay on one
+  line instead of being quoted across lines.
+- `run-diff --format csv` no longer prefixes interval cells such as `-1..1`
+  with `'`.
+- A relative `XDG_CONFIG_HOME` is ignored, as the XDG spec requires;
+  `framedash login` stores credentials under `~/.config` instead of the
+  current directory.
+
+- `framedash query --format csv` now prints the result rows with the column
+  names as the header, as `--format table` already did. It previously printed
+  the response envelope (`rows,rowCount` and one JSON cell).
+- CSV output no longer prefixes numeric, bigint, or boolean cells with `'`.
+  Negative numbers such as a `perf-diff` delta of `-3.2` were emitted as
+  `'-3.2`. String cells that are a plain numeric literal are also left
+  unprefixed, so a negative `Int64`/`UInt64` query column (which ClickHouse
+  returns as a JSON string such as `"-5"`) prints as `-5`. Other string cells
+  starting with `=`, `+`, `-`, or `@`, such as `-1+cmd|...` or `=1+2`, keep
+  the formula-injection prefix.
+- `framedash perf-diff` requests a fresh comparison (`fresh=1`) like
+  `run-profile-test`, so a CI re-run no longer gates on a comparison cached
+  for up to 60 seconds before the latest ingest.
+- An empty or whitespace-only `FRAMEDASH_BASE_URL` or `FRAMEDASH_FORMAT`
+  (for example an unset GitHub Actions `vars.X`) now falls back to the
+  default instead of failing with `Invalid base URL: ""` or `Invalid format`.
+- API keys from `--api-key` and `FRAMEDASH_API_KEY` are trimmed like
+  `--api-key-file` already was, and a key containing a control character
+  (such as an embedded newline) now exits with an error that names its
+  source. Previously the request failed with an HTTP header error that
+  printed the full key to stderr. A stored `framedash login` access token with
+  a control character likewise exits with a prompt to log in again.
+
 ## [0.2.1] - 2026-11-04
 
 ### Added
